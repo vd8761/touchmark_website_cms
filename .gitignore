@@ -1,0 +1,15 @@
+node_modules/
+dist/
+build/
+coverage/
+.env
+.env.local
+*.log
+*.tsbuildinfo
+.DS_Store
+.idea/
+.turbo/
+apps/api/openapi-*.json
+apps/admin/dist/
+.media/
+apps/api/.media/

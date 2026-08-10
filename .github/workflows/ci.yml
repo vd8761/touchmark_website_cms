@@ -1,0 +1,106 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  DATABASE_ADMIN_URL: postgresql://cms:cms@localhost:5432/cms?schema=public
+  DATABASE_URL: postgresql://cms_app:cms_app@localhost:5432/cms?schema=public
+  REDIS_URL: redis://localhost:6379
+  JWT_SECRET: ci-secret-key-that-is-at-least-32-characters-long
+  PASSWORD_PWNED_CHECK: 'false'
+  COOKIE_SECURE: 'false'
+  COOKIE_DOMAIN: ''
+  SMTP_HOST: localhost
+  SMTP_PORT: '1025'
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: cms
+          POSTGRES_PASSWORD: cms
+          POSTGRES_DB: cms
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U cms" --health-interval 5s
+          --health-timeout 5s --health-retries 20
+
+      redis:
+        image: redis:7
+        ports: ['6379:6379']
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s
+          --health-timeout 3s --health-retries 20
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build shared package
+        run: npm run build --workspace @cms/shared
+
+      - name: Permission matrix tests
+        run: npm test --workspace @cms/shared
+
+      - name: Generate Prisma client
+        run: npm run db:generate --workspace @cms/api
+
+      - name: Apply migrations
+        run: npm run db:deploy --workspace @cms/api
+
+      # The application connects as an unprivileged role so RLS actually
+      # applies to it. Without this step the isolation suite would pass for the
+      # wrong reason — as the table owner, every policy is bypassed.
+      - name: Apply row-level security policies
+        run: npm run db:rls --workspace @cms/api
+
+      - name: Typecheck API
+        run: npm run build --workspace @cms/api
+
+      - name: Typecheck and build admin portal
+        run: npm run build --workspace @cms/admin
+
+      - name: Unit tests
+        run: npm run test:unit --workspace @cms/api
+
+      # §4.4 safeguard 5 and §18.2: "Tenant-isolation test suite in CI as a
+      # merge blocker." This step failing must block the merge — do not add
+      # continue-on-error to it.
+      - name: Tenant isolation suite
+        run: npm run test:isolation --workspace @cms/api
+
+      - name: Emit OpenAPI document
+        run: npm run openapi --workspace @cms/api
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: openapi
+          path: apps/api/openapi-admin.json
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # §18.2: automated dependency scanning in CI.
+      - name: Audit dependencies
+        run: npm audit --audit-level=high

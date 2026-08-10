@@ -1,0 +1,19 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": ".",
+    "baseUrl": ".",
+    "declaration": false,
+    "noUnusedLocals": false,
+    // @cms/shared is resolved through the npm workspace symlink in
+    // node_modules, i.e. against its built `dist` types. No path mapping into
+    // its `src`: that would pull another package's sources into this program
+    // and defeat rootDir. Build the shared package before the API.
+    "paths": {
+      "src/*": ["src/*"]
+    }
+  },
+  "include": ["src/**/*", "test/**/*", "scripts/**/*", "prisma/**/*"],
+  "exclude": ["node_modules", "dist"]
+}

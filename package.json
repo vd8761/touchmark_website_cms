@@ -1,0 +1,30 @@
+{
+  "name": "cms-platform",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Multi-Site CMS & Audience Platform — monorepo root",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "test:isolation": "npm run test:isolation --workspace @cms/api",
+    "dev": "npm run dev --workspace @cms/api & npm run dev --workspace @cms/admin",
+    "db:up": "docker compose up -d postgres",
+    "db:down": "docker compose down",
+    "db:migrate": "npm run db:migrate --workspace @cms/api",
+    "db:reset": "npm run db:reset --workspace @cms/api",
+    "openapi": "npm run openapi --workspace @cms/api"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.2"
+  }
+}

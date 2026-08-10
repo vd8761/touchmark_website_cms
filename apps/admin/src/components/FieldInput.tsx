@@ -1,0 +1,354 @@
+import { useState } from 'react';
+
+import type { FieldDto } from '../lib/content-types';
+import { EntryPicker } from './EntryPicker';
+import { MediaPicker, MediaThumbnails } from './MediaPicker';
+import { Button, Field, Input, cx } from './primitives';
+
+/**
+ * Renders one schema-defined field as an input (§17.5, centre column).
+ *
+ * The switch is on `field.type`, so adding a field type to the backend means
+ * adding one branch here — there is no per-content-type UI code anywhere.
+ */
+export function FieldInput({
+  field,
+  value,
+  error,
+  disabled,
+  onChange,
+}: {
+  field: FieldDto;
+  value: unknown;
+  error?: string;
+  disabled?: boolean;
+  onChange: (value: unknown) => void;
+}) {
+  const label = field.required ? `${field.name} *` : field.name;
+
+  // A deprecated field is hidden from the editor but still served by the API
+  // (§7.1), so it must not render an input at all.
+  if (field.deprecated) return null;
+
+  return (
+    <Field label={label} hint={field.help_text ?? undefined} error={error}>
+      {renderControl()}
+    </Field>
+  );
+
+  function renderControl() {
+    switch (field.type) {
+      case 'long_text':
+      case 'markdown':
+      case 'code':
+        return (
+          <textarea
+            value={asString(value)}
+            disabled={disabled}
+            rows={field.type === 'code' ? 10 : 5}
+            onChange={(event) => onChange(event.target.value)}
+            className={cx(
+              'w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text',
+              field.type === 'code' && 'font-mono',
+            )}
+          />
+        );
+
+      case 'rich_text':
+        // Structured JSON per Open Decision #3. A block editor lands with the
+        // rich-text work; until then this edits the document directly rather
+        // than pretending to be WYSIWYG.
+        return (
+          <div className="space-y-1">
+            <textarea
+              value={value ? JSON.stringify(value, null, 2) : ''}
+              disabled={disabled}
+              rows={8}
+              onChange={(event) => {
+                try {
+                  onChange(event.target.value ? JSON.parse(event.target.value) : null);
+                } catch {
+                  // Keep the raw text so a half-typed document is not discarded
+                  // mid-keystroke; validation reports it on save.
+                  onChange(event.target.value);
+                }
+              }}
+              className="w-full rounded-lg border border-border bg-surface px-3 py-2 font-mono text-xs text-text"
+              placeholder='{ "type": "doc", "content": [] }'
+            />
+            <p className="text-xs text-text-secondary">
+              Structured document. A visual editor replaces this input; the stored shape does not
+              change.
+            </p>
+          </div>
+        );
+
+      case 'number':
+      case 'decimal':
+        return (
+          <Input
+            type="number"
+            step={field.type === 'decimal' ? 'any' : '1'}
+            value={value === null || value === undefined ? '' : String(value)}
+            disabled={disabled}
+            onChange={(event) =>
+              onChange(event.target.value === '' ? null : Number(event.target.value))
+            }
+          />
+        );
+
+      case 'boolean':
+        return (
+          <label className="flex items-center gap-2 text-sm text-text">
+            <input
+              type="checkbox"
+              checked={value === true}
+              disabled={disabled}
+              onChange={(event) => onChange(event.target.checked)}
+            />
+            {value === true ? 'Yes' : 'No'}
+          </label>
+        );
+
+      case 'date':
+        return (
+          <Input
+            type="date"
+            value={asString(value).slice(0, 10)}
+            disabled={disabled}
+            onChange={(event) => onChange(event.target.value || null)}
+          />
+        );
+
+      case 'datetime':
+        return (
+          <Input
+            type="datetime-local"
+            value={asString(value).slice(0, 16)}
+            disabled={disabled}
+            onChange={(event) =>
+              onChange(event.target.value ? new Date(event.target.value).toISOString() : null)
+            }
+          />
+        );
+
+      case 'enum':
+        return (
+          <select
+            value={asString(value)}
+            disabled={disabled}
+            onChange={(event) => onChange(event.target.value || null)}
+            className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text"
+          >
+            <option value="">— None —</option>
+            {(field.config.options ?? []).map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label ?? option.value}
+              </option>
+            ))}
+          </select>
+        );
+
+      case 'multi_enum': {
+        const selected = Array.isArray(value) ? (value as string[]) : [];
+        return (
+          <div className="flex flex-wrap gap-2">
+            {(field.config.options ?? []).map((option) => {
+              const on = selected.includes(option.value);
+              return (
+                <button
+                  key={option.value}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() =>
+                    onChange(
+                      on ? selected.filter((v) => v !== option.value) : [...selected, option.value],
+                    )
+                  }
+                  className={cx(
+                    'rounded-full border px-3 py-1 text-xs',
+                    on
+                      ? 'border-accent bg-accent/10 text-accent'
+                      : 'border-border text-text-secondary hover:bg-surface-subtle',
+                  )}
+                >
+                  {option.label ?? option.value}
+                </button>
+              );
+            })}
+          </div>
+        );
+      }
+
+      case 'colour':
+        return (
+          <div className="flex gap-2">
+            <input
+              type="color"
+              value={asString(value) || '#000000'}
+              disabled={disabled}
+              onChange={(event) => onChange(event.target.value)}
+              className="h-9 w-12 rounded border border-border"
+            />
+            <Input
+              value={asString(value)}
+              disabled={disabled}
+              onChange={(event) => onChange(event.target.value)}
+              placeholder="#4F46E5"
+            />
+          </div>
+        );
+
+      case 'json':
+        return (
+          <textarea
+            value={value === null || value === undefined ? '' : JSON.stringify(value, null, 2)}
+            disabled={disabled}
+            rows={6}
+            onChange={(event) => {
+              try {
+                onChange(event.target.value ? JSON.parse(event.target.value) : null);
+              } catch {
+                onChange(event.target.value);
+              }
+            }}
+            className="w-full rounded-lg border border-border bg-surface px-3 py-2 font-mono text-xs text-text"
+          />
+        );
+
+      case 'geo': {
+        const point = (value ?? {}) as { lat?: number; lng?: number };
+        return (
+          <div className="grid grid-cols-2 gap-2">
+            <Input
+              type="number"
+              step="any"
+              value={point.lat ?? ''}
+              disabled={disabled}
+              placeholder="Latitude"
+              onChange={(event) => onChange({ ...point, lat: Number(event.target.value) })}
+            />
+            <Input
+              type="number"
+              step="any"
+              value={point.lng ?? ''}
+              disabled={disabled}
+              placeholder="Longitude"
+              onChange={(event) => onChange({ ...point, lng: Number(event.target.value) })}
+            />
+          </div>
+        );
+      }
+
+      case 'media':
+      case 'media_list':
+        return (
+          <MediaField
+            multiple={field.type === 'media_list'}
+            value={value}
+            disabled={disabled}
+            onChange={onChange}
+          />
+        );
+
+      case 'relation_one':
+      case 'relation_many':
+        return (
+          <EntryPicker
+            value={(value as string | string[] | null) ?? null}
+            multiple={field.type === 'relation_many'}
+            typeApiId={field.config?.relationTypeApiId}
+            disabled={disabled}
+            onChange={(next) => onChange(next)}
+          />
+        );
+
+      case 'email':
+        return (
+          <Input
+            type="email"
+            value={asString(value)}
+            disabled={disabled}
+            onChange={(event) => onChange(event.target.value || null)}
+          />
+        );
+
+      case 'url':
+        return (
+          <Input
+            type="url"
+            value={asString(value)}
+            disabled={disabled}
+            placeholder="https://"
+            onChange={(event) => onChange(event.target.value || null)}
+          />
+        );
+
+      case 'text':
+      case 'slug':
+      default:
+        return (
+          <Input
+            value={asString(value)}
+            disabled={disabled}
+            onChange={(event) => onChange(event.target.value || null)}
+          />
+        );
+    }
+  }
+}
+
+function asString(value: unknown): string {
+  if (value === null || value === undefined) return '';
+  return typeof value === 'string' ? value : String(value);
+}
+
+/** Media field: thumbnails plus a picker, rather than a raw id box. */
+function MediaField({
+  multiple,
+  value,
+  disabled,
+  onChange,
+}: {
+  multiple: boolean;
+  value: unknown;
+  disabled?: boolean;
+  onChange: (value: unknown) => void;
+}) {
+  const [picking, setPicking] = useState(false);
+
+  // A single media field stores a bare id; a list stores an array. The picker
+  // works in arrays either way, so the shape is normalised at this boundary.
+  const ids = multiple
+    ? Array.isArray(value)
+      ? (value as string[])
+      : []
+    : typeof value === 'string' && value
+      ? [value]
+      : [];
+
+  function commit(next: string[]) {
+    onChange(multiple ? next : (next[0] ?? null));
+  }
+
+  return (
+    <div className="space-y-2">
+      <MediaThumbnails ids={ids} onRemove={(id) => commit(ids.filter((v) => v !== id))} />
+
+      {!disabled && (
+        <Button variant="secondary" type="button" onClick={() => setPicking(true)}>
+          {ids.length === 0 ? 'Choose media' : multiple ? 'Add more' : 'Replace'}
+        </Button>
+      )}
+
+      {picking && (
+        <MediaPicker
+          value={ids}
+          multiple={multiple}
+          onChange={commit}
+          onClose={() => setPicking(false)}
+        />
+      )}
+    </div>
+  );
+}

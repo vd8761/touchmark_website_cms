@@ -1,0 +1,55 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Design-system tokens (§17.1). Every colour in the app resolves through one of
+ * these, so dark mode is a variable swap rather than a second set of classes,
+ * and a rebrand touches one file.
+ */
+@layer base {
+  :root {
+    --surface: 255 255 255;
+    --surface-subtle: 248 249 251;
+    --surface-raised: 255 255 255;
+    --border: 226 229 234;
+    --text: 17 20 24;
+    --text-secondary: 100 108 120;
+    --accent: 79 70 229;
+    --accent-fg: 255 255 255;
+    --danger: 220 38 38;
+    --success: 5 150 105;
+    --warning: 217 119 6;
+  }
+
+  .dark {
+    --surface: 17 19 23;
+    --surface-subtle: 23 26 31;
+    --surface-raised: 30 33 39;
+    --border: 46 51 59;
+    --text: 237 240 244;
+    --text-secondary: 148 157 170;
+    --accent: 129 121 245;
+    --accent-fg: 12 13 16;
+    --danger: 248 113 113;
+    --success: 52 211 153;
+    --warning: 251 191 36;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-surface-subtle text-text antialiased;
+    font-family: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  }
+
+  /* Focus is never removed, only restyled — keyboard users must always be able
+     to see where they are (§18.5 / accessibility pass). */
+  :focus-visible {
+    @apply outline-none ring-2 ring-accent ring-offset-2 ring-offset-surface;
+  }
+}
