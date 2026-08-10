@@ -257,7 +257,18 @@ export class WebhooksService implements OnModuleInit {
 
     let delivered = 0;
     for (const delivery of deliveries) {
-      if (await this.dispatchDelivery(delivery)) delivered += 1;
+      // One endpoint must never be able to stop every other endpoint. Anything
+      // thrown before the per-delivery try/catch — a signing secret that no
+      // longer decrypts is the realistic case, after ENCRYPTION_KEYS or the
+      // JWT_SECRET it falls back to has changed — would otherwise escape this
+      // loop and fail the recurring job, silently halting delivery platform-wide
+      // for every workspace. Route it through the same failure path as an HTTP
+      // error so it backs off and eventually disables that endpoint alone.
+      try {
+        if (await this.dispatchDelivery(delivery)) delivered += 1;
+      } catch (error) {
+        await this.markFailed(delivery, (error as Error).message).catch(() => undefined);
+      }
     }
 
     return { attempted: deliveries.length, delivered };
