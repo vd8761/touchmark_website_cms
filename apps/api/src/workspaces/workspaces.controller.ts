@@ -8,6 +8,7 @@ import {
   AddWorkspaceMemberDto,
   CreateWorkspaceDto,
   DeleteWorkspaceDto,
+  TransferWorkspaceOwnershipDto,
   UpdateWorkspaceDto,
   UpdateWorkspaceMemberDto,
 } from './dto/workspace.dto';
@@ -134,6 +135,27 @@ export class WorkspacesController {
   ) {
     await this.workspaces.scheduleDeletion(req.ctx!, workspaceId, dto.confirm_name);
     return { data: { status: 'pending_deletion' } };
+  }
+
+  @Post('transfer-ownership')
+  @HttpCode(200)
+  @RequirePermission('workspace.ownership.transfer')
+  @ApiOperation({
+    summary: 'Transfer this site to another organisation member',
+    description:
+      'Name the new owner by `email` (or `user_id`). They are granted Site Admin; the outgoing ' +
+      'owner is demoted to Editor and keeps access. Only the current owner or an organisation ' +
+      'Owner/Admin may do this, and both parties are emailed.',
+  })
+  @ApiResponse({ status: 400, description: 'Not an organisation member, or the name did not match.' })
+  @ApiResponse({ status: 403, description: 'Site Admin alone cannot transfer a site they do not own.' })
+  async transferOwnership(
+    @Param('workspaceId') workspaceId: string,
+    @Body() dto: TransferWorkspaceOwnershipDto,
+    @Req() req: Request,
+  ) {
+    const owner = await this.workspaces.transferOwnership(req.ctx!, workspaceId, dto);
+    return { data: { owner_id: owner.user_id, owner_email: owner.email } };
   }
 
   // -- Members ---------------------------------------------------------------

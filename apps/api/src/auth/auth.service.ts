@@ -358,6 +358,7 @@ export class AuthService {
             orgRoleById.get(w.organisationId) === 'admin'
               ? 'site_admin'
               : null),
+          owner_id: w.ownerId,
           created_at: w.createdAt.toISOString(),
         })),
       };

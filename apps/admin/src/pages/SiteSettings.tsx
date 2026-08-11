@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import type { WorkspaceDto } from '@cms/shared';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import type { WorkspaceDto, WorkspaceMemberDto } from '@cms/shared';
 
 import { ApiError, api } from '../lib/api';
-import { Button, Card, Field, Input } from '../components/primitives';
+import { Button, Card, CopyableId, Field, Input } from '../components/primitives';
+import { TransferOwnership } from '../components/TransferOwnership';
 import { useSession } from '../lib/session';
 
 /**
@@ -14,7 +15,7 @@ import { useSession } from '../lib/session';
  * someone set a value that nothing reads.
  */
 export function SiteSettings() {
-  const { currentWorkspace, refresh, can } = useSession();
+  const { currentWorkspace, currentOrg, refresh, can } = useSession();
   const queryClient = useQueryClient();
 
   const [form, setForm] = useState({ name: '', description: '', primary_url: '', timezone: '' });
@@ -63,9 +64,33 @@ export function SiteSettings() {
       <header>
         <h1 className="text-2xl font-semibold text-text">Site settings</h1>
         <p className="mt-1 text-sm text-text-secondary">
-          Called a “site” here and a workspace in the API — <code>{currentWorkspace.id}</code>.
+          Called a “site” here and a workspace in the API.
         </p>
       </header>
+
+      <Card className="space-y-4">
+        <div>
+          <h2 className="text-sm font-semibold text-text">Identifiers</h2>
+          <p className="mt-1 text-xs text-text-secondary">
+            Every Admin API path is built from the site id, so it is the one value you will need
+            again and again.
+          </p>
+        </div>
+
+        <CopyableId
+          label="Site ID"
+          value={currentWorkspace.id}
+          hint={`Used as {workspaceId} in /admin/v1/workspaces/{workspaceId}/…`}
+        />
+
+        {currentOrg && <CopyableId label="Organisation ID" value={currentOrg.id} />}
+
+        <CopyableId
+          label="Slug"
+          value={currentWorkspace.slug}
+          hint="Part of this site’s portal URLs. Changing it breaks existing links."
+        />
+      </Card>
 
       <Card className="space-y-4">
         <h2 className="text-sm font-semibold text-text">General</h2>
@@ -105,10 +130,6 @@ export function SiteSettings() {
             onChange={(event) => update({ timezone: event.target.value })}
           />
         </Field>
-
-        <Field label="Slug" hint="Part of this site’s URLs. Changing it breaks existing links.">
-          <Input value={currentWorkspace.slug} disabled readOnly />
-        </Field>
       </Card>
 
       {error && (
@@ -147,8 +168,47 @@ export function SiteSettings() {
         </div>
       )}
 
+      <OwnershipCard workspace={currentWorkspace} />
+
       <DangerZone workspace={currentWorkspace} />
     </div>
+  );
+}
+
+/**
+ * Site ownership (§6.3).
+ *
+ * The owner is resolved from the members list rather than fetched separately —
+ * the list already carries `is_owner`, and one request that answers both "who
+ * owns this" and "who else is here" beats two.
+ */
+function OwnershipCard({ workspace }: { workspace: WorkspaceDto }) {
+  const { refresh, can } = useSession();
+  const queryClient = useQueryClient();
+
+  const members = useQuery({
+    queryKey: ['workspace-members', workspace.id],
+    queryFn: () => api.list<WorkspaceMemberDto>(`/admin/v1/workspaces/${workspace.id}/members`),
+    enabled: can('workspace.view'),
+  });
+
+  if (!can('workspace.ownership.transfer')) return null;
+
+  const owner = members.data?.items.find((m) => m.is_owner) ?? null;
+
+  return (
+    <TransferOwnership
+      scope="site"
+      name={workspace.name}
+      endpoint={`/admin/v1/workspaces/${workspace.id}/transfer-ownership`}
+      ownerLabel={owner ? (owner.user.full_name ?? owner.user.email) : null}
+      consequence="The new owner becomes Site Admin; the outgoing owner is demoted to Editor and keeps access to the site."
+      disabled={workspace.status === 'archived'}
+      onTransferred={async () => {
+        await refresh();
+        await queryClient.invalidateQueries({ queryKey: ['workspace-members', workspace.id] });
+      }}
+    />
   );
 }
 

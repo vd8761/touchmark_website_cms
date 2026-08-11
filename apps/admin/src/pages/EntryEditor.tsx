@@ -29,6 +29,11 @@ export function EntryEditor() {
   const entryPath = `/admin/v1/workspaces/${ws}/content/entries/${entryId}`;
 
   const [draft, setDraft] = useState<Record<string, unknown>>({});
+  // Held separately from `draft`: the slug is a property of the entry, not one
+  // of its field values, and the API takes it as its own key. `null` means
+  // "untouched" — the server then keeps deriving it from the title, which is
+  // what you want until someone deliberately overrides it.
+  const [slugDraft, setSlugDraft] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [actionError, setActionError] = useState<ApiError | null>(null);
@@ -61,6 +66,7 @@ export function EntryEditor() {
   useEffect(() => {
     if (!entry) return;
     setDraft(entry.data ?? {});
+    setSlugDraft(null);
     setDirty(false);
   }, [entry?.id, entry?.current_version]);
 
@@ -68,6 +74,9 @@ export function EntryEditor() {
     mutationFn: () =>
       api.patch<EntryDto>(entryPath, {
         data: draft,
+        // Only sent when edited, so an untouched slug keeps auto-deriving from
+        // the title instead of being pinned to its placeholder.
+        ...(slugDraft === null ? {} : { slug: slugDraft }),
         // Optimistic concurrency: a second editor's save turns this into a 409
         // rather than silently discarding their work.
         expected_version: entry?.current_version,
@@ -163,7 +172,11 @@ export function EntryEditor() {
           </Link>
           <div className="mt-1 flex flex-wrap items-center gap-2">
             <h1 className="text-xl font-semibold text-text">
-              {entry.slug ? `/${entry.slug}` : 'Untitled entry'}
+              {slugDraft !== null
+                ? `/${slugDraft}`
+                : entry.slug
+                  ? `/${entry.slug}`
+                  : 'Untitled entry'}
             </h1>
             <Pill tone={STATUS_TONE[entry.status]}>{STATUS_LABEL[entry.status]}</Pill>
             {entry.has_unpublished_changes && <Pill tone="warning">Unpublished changes</Pill>}
@@ -237,6 +250,43 @@ export function EntryEditor() {
         </Card>
 
         <div className="space-y-4">
+          {/* §17.5 treats the slug as editable. Until it is published the server
+              keeps deriving it from the title, so an entry saved with a title
+              stops being `/untitled` on its own — but a derived slug is a guess,
+              and the URL is the one thing you cannot fix after the fact. */}
+          {type.has_slug && (
+            <Card className="space-y-2">
+              <h2 className="text-sm font-semibold text-text">URL slug</h2>
+              <Field
+                label="Slug"
+                hint={
+                  entry.status === 'published'
+                    ? 'This entry is live. Changing the slug changes its public URL.'
+                    : 'Left alone, this follows the title until the entry is first published.'
+                }
+                error={fieldErrors.slug}
+              >
+                <Input
+                  value={slugDraft ?? entry.slug ?? ''}
+                  placeholder="derived-from-the-title"
+                  onChange={(event) => {
+                    setSlugDraft(event.target.value);
+                    setDirty(true);
+                  }}
+                />
+              </Field>
+              {slugDraft !== null && (
+                <button
+                  type="button"
+                  onClick={() => setSlugDraft(null)}
+                  className="text-xs text-accent hover:underline"
+                >
+                  Go back to deriving it from the title
+                </button>
+              )}
+            </Card>
+          )}
+
           {canPublish && type.enable_scheduling && entry.status !== 'published' && (
             <Card className="space-y-3">
               <h2 className="text-sm font-semibold text-text">Schedule</h2>
@@ -322,6 +372,7 @@ export function EntryEditor() {
                 variant="ghost"
                 onClick={() => {
                   setDraft(entry.data ?? {});
+                  setSlugDraft(null);
                   setDirty(false);
                   setFieldErrors({});
                 }}

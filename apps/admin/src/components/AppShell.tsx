@@ -26,57 +26,137 @@ interface NavItem {
   orgOnly?: boolean;
   /** Phase this arrives in; items beyond Phase 0 are shown as "soon". */
   ready?: boolean;
+  icon: IconName;
 }
 
+/**
+ * The grouping answers one question per section: what is this thing *for*?
+ *
+ * CONTENT holds only the entries people write — the content types that define
+ * them are not content, they are the schema, and mixing the two put "Blog
+ * posts" in the same list as "Content types" and made both harder to find.
+ * STRUCTURE is how content is organised (taxonomies, menus, the media it draws
+ * on); CONFIGURATION is everything you set up once and rarely touch, including
+ * the content model. Site- and organisation-level configuration are separated
+ * by a labelled sub-heading rather than being interleaved, because "Members"
+ * and "Email configurations" answering to different scopes was invisible.
+ */
 const NAV: { section: string; items: NavItem[] }[] = [
   {
     section: 'Overview',
-    items: [{ label: 'Dashboard', to: '', ready: true }],
+    items: [{ label: 'Dashboard', to: '', ready: true, icon: 'dashboard' }],
   },
   {
+    // Content types are inserted here at runtime, and nothing else lives here —
+    // see the `dynamic` list in the render below.
     section: 'Content',
+    items: [],
+  },
+  {
+    section: 'Structure',
     items: [
-      // Content types are inserted here at runtime — see contentTypeItems().
-      { label: 'Content types', to: 'settings/content-types', permission: 'contenttype.manage', ready: true },
-      { label: 'Media', to: 'media', permission: 'media.view', ready: true },
-      { label: 'Taxonomies', to: 'taxonomies', permission: 'taxonomy.view', ready: true },
-      { label: 'Menus', to: 'menus', permission: 'menu.manage', ready: true },
+      { label: 'Media', to: 'media', permission: 'media.view', ready: true, icon: 'media' },
+      { label: 'Taxonomies', to: 'taxonomies', permission: 'taxonomy.view', ready: true, icon: 'tag' },
+      { label: 'Menus', to: 'menus', permission: 'menu.manage', ready: true, icon: 'menu' },
     ],
   },
   {
     section: 'Audience',
     items: [
-      { label: 'Subscribers', to: 'subscribers', permission: 'subscriber.view' },
-      { label: 'Lists & segments', to: 'lists', permission: 'list.manage' },
-      { label: 'Forms', to: 'forms', permission: 'form.view' },
+      { label: 'Subscribers', to: 'subscribers', permission: 'subscriber.view', icon: 'people' },
+      { label: 'Lists & segments', to: 'lists', permission: 'list.manage', icon: 'list' },
+      { label: 'Forms', to: 'forms', permission: 'form.view', icon: 'form' },
     ],
   },
   {
     section: 'Email',
     items: [
-      { label: 'Campaigns', to: 'campaigns', permission: 'campaign.view' },
-      { label: 'Automations', to: 'automations', permission: 'automation.manage' },
-      { label: 'Sending', to: 'settings/email', permission: 'senderidentity.manage', ready: true },
+      { label: 'Campaigns', to: 'campaigns', permission: 'campaign.view', icon: 'send' },
+      { label: 'Automations', to: 'automations', permission: 'automation.manage', icon: 'bolt' },
     ],
   },
   {
     section: 'Developers',
     items: [
-      { label: 'API keys', to: 'api-keys', permission: 'apikey.manage', ready: true },
-      { label: 'Webhooks', to: 'webhooks', permission: 'webhook.manage', ready: true },
-      { label: 'Logs', to: 'logs', permission: 'apilog.view', ready: true },
+      { label: 'API keys', to: 'api-keys', permission: 'apikey.manage', ready: true, icon: 'key' },
+      { label: 'Webhooks', to: 'webhooks', permission: 'webhook.manage', ready: true, icon: 'webhook' },
+      { label: 'Request logs', to: 'logs', permission: 'apilog.view', ready: true, icon: 'logs' },
     ],
   },
   {
-    section: 'Settings',
+    section: 'Site configuration',
     items: [
-      { label: 'Site settings', to: 'settings', permission: 'workspace.settings.edit', ready: true },
-      { label: 'Email configurations', to: 'settings/org/email', orgOnly: true, ready: true },
-      { label: 'Members', to: 'settings/members', permission: 'workspace.view', ready: true },
-      { label: 'Audit log', to: 'settings/audit-log', permission: 'auditlog.view', ready: true },
+      {
+        label: 'Content model',
+        to: 'settings/content-types',
+        permission: 'contenttype.manage',
+        ready: true,
+        icon: 'schema',
+      },
+      { label: 'Site settings', to: 'settings', permission: 'workspace.settings.edit', ready: true, icon: 'settings' },
+      { label: 'Site members', to: 'settings/members', permission: 'workspace.view', ready: true, icon: 'people' },
+      { label: 'Sending', to: 'settings/email', permission: 'senderidentity.manage', ready: true, icon: 'send' },
+      { label: 'Audit log', to: 'settings/audit-log', permission: 'auditlog.view', ready: true, icon: 'logs' },
+    ],
+  },
+  {
+    section: 'Organisation',
+    items: [
+      { label: 'Organisation settings', to: 'settings/org', orgOnly: true, ready: true, icon: 'building' },
+      { label: 'Email configurations', to: 'settings/org/email', orgOnly: true, ready: true, icon: 'mail' },
     ],
   },
 ];
+
+/**
+ * Icons, inline rather than from a library.
+ *
+ * Two reasons: the collapsed rail was showing the first letter of each label,
+ * which made "Media" and "Menus" identical, and the expanded list had nothing
+ * to anchor the eye — every row was the same weight of grey text, which is what
+ * made the titles hard to pick out. Fourteen 24×24 paths are cheaper than a
+ * dependency and never drift out of step with the palette, since they inherit
+ * `currentColor`.
+ */
+const ICONS = {
+  dashboard: 'M4 13h7V4H4v9Zm0 7h7v-5H4v5Zm9 0h7v-9h-7v9Zm0-16v5h7V4h-7Z',
+  doc: 'M6 2h7l5 5v15H6V2Zm7 1.5V8h4.5M9 13h6M9 17h6',
+  media: 'M3 5h18v14H3V5Zm0 10 5-5 4 4 3-3 6 6M8.5 9.5a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Z',
+  tag: 'M3 3h8l10 10-8 8L3 11V3Zm4 4h.01',
+  menu: 'M4 6h16M4 12h16M4 18h10',
+  people: 'M16 20v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2M9 10a4 4 0 1 0 0-8 4 4 0 0 0 0 8Zm13 10v-2a4 4 0 0 0-3-3.87',
+  list: 'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01',
+  form: 'M4 3h16v18H4V3Zm4 5h8M8 12h8M8 16h4',
+  send: 'M22 2 11 13M22 2l-7 20-4-9-9-4 20-7Z',
+  bolt: 'M13 2 4 14h7l-1 8 9-12h-7l1-8Z',
+  key: 'M14 7a4 4 0 1 1-3.2 6.4L4 20H2v-2l6.6-6.8A4 4 0 0 1 14 7Zm2.5 2.5h.01',
+  webhook: 'M9 8a3 3 0 1 1 5 2.2L17 16m-9-3-3 5m1-1a3 3 0 1 0 3 3h8a3 3 0 1 0-3-3',
+  logs: 'M4 4h16v16H4V4Zm3 4h10M7 12h10M7 16h6',
+  schema: 'M9 3h6v4H9V3ZM3 17h6v4H3v-4Zm12 0h6v4h-6v-4ZM12 7v4M6 17v-2h12v2',
+  settings:
+    'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm8.4-3a8.4 8.4 0 0 0-.1-1.3l2-1.5-2-3.4-2.3 1a8.4 8.4 0 0 0-2.2-1.3L15.4 3h-4l-.4 2.5a8.4 8.4 0 0 0-2.2 1.3l-2.3-1-2 3.4 2 1.5a8.4 8.4 0 0 0 0 2.6l-2 1.5 2 3.4 2.3-1a8.4 8.4 0 0 0 2.2 1.3l.4 2.5h4l.4-2.5a8.4 8.4 0 0 0 2.2-1.3l2.3 1 2-3.4-2-1.5c.06-.43.1-.86.1-1.3Z',
+  building: 'M3 21h18M5 21V4a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v17M15 9h3a1 1 0 0 1 1 1v11M9 7h2M9 11h2M9 15h2',
+  mail: 'M3 5h18v14H3V5Zm0 1 9 7 9-7',
+} as const;
+
+type IconName = keyof typeof ICONS;
+
+function Icon({ name }: { name: IconName }) {
+  return (
+    <svg
+      aria-hidden
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.6}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className="h-4 w-4 shrink-0"
+    >
+      <path d={ICONS[name]} />
+    </svg>
+  );
+}
 
 export function AppShell() {
   const { currentOrg, currentWorkspace, can, loading } = useSession();
@@ -146,8 +226,8 @@ export function AppShell() {
           )}
         </div>
 
-        <nav className="flex-1 overflow-y-auto p-2">
-          {NAV.map((group) => {
+        <nav className="flex-1 space-y-5 overflow-y-auto px-2 py-3">
+          {NAV.map((group, groupIndex) => {
             const dynamic: NavItem[] =
               group.section === 'Content'
                 ? (contentTypes.data?.items ?? []).map((type) => ({
@@ -155,6 +235,7 @@ export function AppShell() {
                     to: `content/${type.api_id}`,
                     permission: 'content.view' as Permission,
                     ready: true,
+                    icon: 'doc' as IconName,
                   }))
                 : [];
 
@@ -164,9 +245,18 @@ export function AppShell() {
             if (items.length === 0) return null;
 
             return (
-              <div key={group.section} className="mb-4">
-                {!collapsed && (
-                  <p className="px-2.5 pb-1 text-[10px] font-semibold uppercase tracking-wide text-text-secondary">
+              <div key={group.section}>
+                {collapsed ? (
+                  // A hairline stands in for the heading, so the rail keeps the
+                  // grouping instead of collapsing into one undifferentiated
+                  // column of icons.
+                  groupIndex > 0 && <div aria-hidden className="mx-3 mb-2 border-t border-border" />
+                ) : (
+                  // Bumped from 10px/secondary to 11px at 60% of the *primary*
+                  // text colour: the old headings sat at the same weight and
+                  // colour as the items beneath them, so the groups read as one
+                  // long list and the titles were easy to miss entirely.
+                  <p className="px-2.5 pb-1.5 text-[11px] font-semibold uppercase tracking-[0.08em] text-text/60">
                     {group.section}
                   </p>
                 )}
@@ -179,18 +269,28 @@ export function AppShell() {
                         title={collapsed ? item.label : undefined}
                         className={({ isActive }) =>
                           cx(
-                            'flex items-center justify-between rounded-lg px-2.5 py-1.5 text-sm',
+                            // The active row gets a left marker as well as a
+                            // fill: on a subtle palette a background change
+                            // alone is easy to miss, and "where am I" is the
+                            // question the sidebar exists to answer.
+                            'relative flex items-center gap-2.5 rounded-lg py-1.5 pl-2.5 pr-2 text-sm',
+                            'before:absolute before:left-0 before:top-1/2 before:h-4 before:w-0.5',
+                            'before:-translate-y-1/2 before:rounded-full',
                             isActive
-                              ? 'bg-surface-subtle font-semibold text-text'
-                              : 'text-text-secondary hover:bg-surface-subtle hover:text-text',
-                            collapsed && 'justify-center',
+                              ? 'bg-surface-subtle font-semibold text-text before:bg-accent'
+                              : 'font-medium text-text-secondary hover:bg-surface-subtle hover:text-text',
+                            collapsed && 'justify-center pl-2',
                           )
                         }
                       >
-                        <span className={cx('truncate', collapsed && 'sr-only')}>{item.label}</span>
-                        {collapsed && <span aria-hidden>{item.label[0]}</span>}
+                        <Icon name={item.icon} />
+                        <span className={cx('flex-1 truncate', collapsed && 'sr-only')}>
+                          {item.label}
+                        </span>
                         {!collapsed && item.ready === undefined && (
-                          <span className="text-[10px] text-text-secondary">soon</span>
+                          <span className="rounded bg-surface-subtle px-1 py-px text-[10px] font-medium uppercase text-text-secondary">
+                            Soon
+                          </span>
                         )}
                       </NavLink>
                     </li>
@@ -200,6 +300,12 @@ export function AppShell() {
             );
           })}
         </nav>
+
+        {!collapsed && (
+          <p className="border-t border-border px-3 py-2 text-[11px] text-text-secondary">
+            Press <kbd className="rounded border border-border px-1">[</kbd> to collapse
+          </p>
+        )}
       </aside>
 
       <div className="flex min-w-0 flex-1 flex-col">

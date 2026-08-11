@@ -92,8 +92,32 @@ export class UpdateMemberRoleDto {
   role!: OrgRole;
 }
 
+/**
+ * Ownership is handed over by naming the person, and the identifier people
+ * actually know each other by is an email address — nobody has a colleague's
+ * UUID to hand. `user_id` remains accepted so existing callers keep working;
+ * exactly one of the two must be supplied.
+ */
 export class TransferOwnershipDto {
-  @ApiProperty({ description: 'The user id of the member who becomes Owner.' })
+  @ApiPropertyOptional({
+    example: 'new.owner@acme.com',
+    description: 'Email of the member who becomes Owner. They must already be in the organisation.',
+  })
+  @IsOptional()
+  @IsEmail()
+  email?: string;
+
+  @ApiPropertyOptional({ description: 'The user id of the member who becomes Owner.' })
+  @IsOptional()
   @IsUUID()
-  user_id!: string;
+  user_id?: string;
+
+  @ApiPropertyOptional({
+    description:
+      'The exact organisation name, typed to confirm. Required by the portal; the API accepts ' +
+      'the call without it so scripted transfers are not blocked on a string match.',
+  })
+  @IsOptional()
+  @IsString()
+  confirm_name?: string;
 }

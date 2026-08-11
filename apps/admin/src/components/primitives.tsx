@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode } from 'react';
+import { useState, type ButtonHTMLAttributes, type InputHTMLAttributes, type ReactNode } from 'react';
 
 /**
  * Design-system primitives (Phase 0 deliverable, §19).
@@ -96,6 +96,51 @@ export function Input({ className, ...props }: InputHTMLAttributes<HTMLInputElem
         className,
       )}
     />
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+/**
+ * An identifier the user is expected to copy rather than read — a workspace id,
+ * an organisation id, a request id.
+ *
+ * These are UUIDs. Nobody transcribes one correctly, so the whole value is
+ * shown in a monospaced box that selects cleanly and sits next to a copy
+ * button; burying one mid-sentence makes it look like prose and hides the fact
+ * that it is the thing every API path is built from.
+ */
+export function CopyableId({
+  label,
+  value,
+  hint,
+}: {
+  label: string;
+  value: string;
+  hint?: string;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  function copy() {
+    void navigator.clipboard?.writeText(value).then(() => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1500);
+    });
+  }
+
+  return (
+    <div className="space-y-1.5">
+      <p className="text-sm font-medium text-text">{label}</p>
+      {hint && <p className="text-xs text-text-secondary">{hint}</p>}
+      <div className="flex items-stretch gap-2">
+        <code className="flex-1 select-all overflow-x-auto whitespace-nowrap rounded-lg border border-border bg-surface-subtle px-3 py-2 text-xs text-text">
+          {value}
+        </code>
+        <Button variant="secondary" onClick={copy} className="shrink-0">
+          {copied ? 'Copied' : 'Copy'}
+        </Button>
+      </div>
+    </div>
   );
 }
 

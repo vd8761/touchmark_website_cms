@@ -15,6 +15,7 @@ import { Menus } from './pages/Menus';
 import { Login } from './pages/Login';
 import { Members } from './pages/Members';
 import { Onboarding } from './pages/Onboarding';
+import { OrganisationSettings } from './pages/OrganisationSettings';
 import { Register } from './pages/Register';
 import { SiteEmail } from './pages/SiteEmail';
 import { Taxonomies } from './pages/Taxonomies';
@@ -79,6 +80,7 @@ function SiteRoutes() {
           <Route path="settings/audit-log" element={<AuditLog />} />
           {/* Organisation-level, but reached from inside a site so the shell
               (and its site switcher) stays in place. */}
+          <Route path="settings/org" element={<OrganisationSettings />} />
           <Route path="settings/org/email" element={<EmailConfigurations />} />
           <Route path="*" element={<NotYetBuilt />} />
         </Route>

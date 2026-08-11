@@ -193,15 +193,19 @@ export class OrganisationsController {
   @RequireOrgPermission('org.ownership.transfer')
   @ApiOperation({
     summary: 'Transfer ownership to another member',
-    description: 'The current Owner becomes an Admin rather than losing access entirely.',
+    description:
+      'Name the new Owner by `email` (or `user_id`); they must already be a member of the ' +
+      'organisation. The current Owner becomes an Admin rather than losing access entirely. ' +
+      'Both parties are emailed.',
   })
+  @ApiResponse({ status: 400, description: 'Not a member, or the typed confirmation did not match.' })
   async transfer(
     @Param('orgId') orgId: string,
     @Body() dto: TransferOwnershipDto,
     @Req() req: Request,
   ) {
-    await this.orgs.transferOwnership(req.ctx!, orgId, dto.user_id);
-    return { data: { owner_id: dto.user_id } };
+    const owner = await this.orgs.transferOwnership(req.ctx!, orgId, dto);
+    return { data: { owner_id: owner.user_id, owner_email: owner.email } };
   }
 
   @Get(':orgId/audit-logs')

@@ -88,7 +88,10 @@ export function MediaLibrary() {
         {canUpload && (
           <Uploader
             base={base}
-            onUploaded={() => queryClient.invalidateQueries({ queryKey: ['media', ws] })}
+            onUploaded={() => {
+              void queryClient.invalidateQueries({ queryKey: ['media', ws] });
+              void queryClient.invalidateQueries({ queryKey: ['media-picker', ws] });
+            }}
           />
         )}
       </header>
@@ -184,7 +187,18 @@ export function MediaLibrary() {
  *   2. PUT the bytes straight to storage
  *   3. tell the API it finished, so it can verify what landed
  */
-export function Uploader({ base, onUploaded }: { base: string; onUploaded: () => void }) {
+export function Uploader({
+  base,
+  label = '⬆ Upload',
+  multiple = true,
+  onUploaded,
+}: {
+  base: string;
+  label?: string;
+  multiple?: boolean;
+  /** The assets that completed, so a caller can select what was just uploaded. */
+  onUploaded: (assetIds: string[]) => void;
+}) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -193,6 +207,8 @@ export function Uploader({ base, onUploaded }: { base: string; onUploaded: () =>
     if (!files?.length) return;
     setBusy(true);
     setError(null);
+
+    const completed: string[] = [];
 
     try {
       for (const file of Array.from(files)) {
@@ -216,14 +232,16 @@ export function Uploader({ base, onUploaded }: { base: string; onUploaded: () =>
         if (!uploaded.ok) throw new Error(`Upload failed (${uploaded.status}).`);
 
         await api.post(`${base}/${reserved.asset_id}/complete`);
+        completed.push(reserved.asset_id);
       }
-
-      onUploaded();
     } catch (caught) {
       setError(caught instanceof ApiError ? (caught.detail ?? caught.message) : String(caught));
     } finally {
       setBusy(false);
       if (inputRef.current) inputRef.current.value = '';
+      // Reported even when a later file failed: the ones that did land are
+      // already in the library, and hiding them would look like data loss.
+      if (completed.length > 0) onUploaded(completed);
     }
   }
 
@@ -232,12 +250,12 @@ export function Uploader({ base, onUploaded }: { base: string; onUploaded: () =>
       <input
         ref={inputRef}
         type="file"
-        multiple
+        multiple={multiple}
         className="hidden"
         onChange={(event) => void handleFiles(event.target.files)}
       />
       <Button variant="primary" loading={busy} onClick={() => inputRef.current?.click()}>
-        ⬆ Upload
+        {label}
       </Button>
       {error && <p className="mt-1 max-w-xs text-xs text-danger">{error}</p>}
     </div>

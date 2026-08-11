@@ -1,9 +1,9 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { api } from '../lib/api';
 import { useSession } from '../lib/session';
 import { Button, Skeleton, cx } from './primitives';
-import { formatBytes, type MediaAssetDto } from '../pages/MediaLibrary';
+import { Uploader, formatBytes, type MediaAssetDto } from '../pages/MediaLibrary';
 
 /**
  * Picker for `media` and `media_list` fields (§17.5: "Media fields show a
@@ -23,7 +23,8 @@ export function MediaPicker({
   onChange: (ids: string[]) => void;
   onClose: () => void;
 }) {
-  const { currentWorkspace } = useSession();
+  const { currentWorkspace, can } = useSession();
+  const queryClient = useQueryClient();
   const base = `/admin/v1/workspaces/${currentWorkspace?.id}/media`;
 
   const { data, isLoading } = useQuery({
@@ -31,6 +32,29 @@ export function MediaPicker({
     queryFn: () => api.list<MediaAssetDto>(`${base}?limit=100`),
     enabled: Boolean(currentWorkspace?.id),
   });
+
+  const canUpload = can('media.upload');
+
+  /**
+   * Uploading from inside the picker, rather than sending someone to the Media
+   * page and back. The file they want is nearly always the one they do not have
+   * yet, and losing the half-filled entry behind you to go and upload it is the
+   * kind of detour that gets a CMS abandoned.
+   */
+  async function afterUpload(assetIds: string[]) {
+    // Both caches hold the same list; the Media page must not go stale either.
+    await queryClient.invalidateQueries({ queryKey: ['media-picker', currentWorkspace?.id] });
+    void queryClient.invalidateQueries({ queryKey: ['media', currentWorkspace?.id] });
+
+    // Uploading is an act of choosing — nobody uploads a file into the picker
+    // and then wants to hunt for it in the grid.
+    if (!multiple) {
+      onChange([assetIds[0]!]);
+      onClose();
+      return;
+    }
+    onChange([...value, ...assetIds.filter((id) => !value.includes(id))]);
+  }
 
   function toggle(assetId: string) {
     if (!multiple) {
@@ -49,11 +73,21 @@ export function MediaPicker({
         className="max-h-[80vh] w-full max-w-3xl overflow-y-auto rounded-xl bg-surface p-5"
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-3">
           <h2 className="text-lg font-semibold text-text">Choose media</h2>
-          <button type="button" onClick={onClose} className="text-text-secondary hover:text-text">
-            ✕
-          </button>
+          <div className="flex items-center gap-2">
+            {canUpload && (
+              <Uploader
+                base={base}
+                label="⬆ Upload"
+                multiple={multiple}
+                onUploaded={(ids) => void afterUpload(ids)}
+              />
+            )}
+            <button type="button" onClick={onClose} className="text-text-secondary hover:text-text">
+              ✕
+            </button>
+          </div>
         </div>
 
         {isLoading ? (
@@ -62,7 +96,9 @@ export function MediaPicker({
           </div>
         ) : assets.length === 0 ? (
           <p className="mt-6 text-sm text-text-secondary">
-            No media yet. Upload files from the Media page first.
+            {canUpload
+              ? 'No media yet — use Upload above to add your first file.'
+              : 'No media yet, and your role cannot upload. Ask a Site Admin to add files.'}
           </p>
         ) : (
           <div className="mt-4 grid grid-cols-3 gap-3 sm:grid-cols-4">

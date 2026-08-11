@@ -64,6 +64,14 @@ async function bootstrap(): Promise<void> {
           // Widening this for *images only* costs little: an <img> cannot
           // execute anything.
           imgSrc: ["'self'", 'data:', 'blob:', 'https:'],
+          // Uploads go direct to storage (§4.2): the browser PUTs the file to a
+          // presigned URL on S3, R2 or MinIO, which is a different origin from
+          // the portal. Without this, `connect-src` inherits `'self'` and the
+          // browser blocks that PUT before it is sent — the upload fails with
+          // nothing in the network tab and nothing in the API log. Widening it
+          // for images alone was not enough, because reading a thumbnail and
+          // writing a file are different directives.
+          connectSrc: ["'self'", 'https:'],
         },
       },
       referrerPolicy: { policy: 'strict-origin-when-cross-origin' },

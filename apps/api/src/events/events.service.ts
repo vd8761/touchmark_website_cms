@@ -31,6 +31,7 @@ export type DomainEventType =
   | 'workspace.archived'
   | 'workspace.restored'
   | 'workspace.deletion_scheduled'
+  | 'workspace.ownership_transferred'
   | 'member.invited'
   | 'member.joined'
   | 'member.removed'

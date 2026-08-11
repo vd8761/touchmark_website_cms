@@ -4,6 +4,7 @@ import type { WorkspaceDto, WorkspaceMemberDto, WorkspaceRole } from '@cms/share
 import { AuditService } from '../audit/audit.service';
 import { AppError, notFound } from '../common/errors';
 import { MailService } from '../common/mail.service';
+import { resolveOrganisationMember } from '../common/member-lookup';
 import { PrismaService } from '../common/prisma.service';
 import { RequestContext } from '../common/request-context';
 import { newId } from '../common/uuid';
@@ -60,6 +61,7 @@ export class WorkspacesService {
           locales: [input.default_locale ?? 'en'],
           colour: input.colour ?? '#4F46E5',
           createdBy: ctx.userId,
+          ownerId: ctx.userId,
           settings: defaultSettings(),
         },
       });
@@ -299,13 +301,128 @@ export class WorkspacesService {
     await this.notifyOwners(workspace.organisationId, ctx, workspace.name, 'deleted');
   }
 
+  /**
+   * Hands one site to another organisation member, named by email (§6.3).
+   *
+   * Distinct from the organisation transfer above: this moves a single site and
+   * never touches organisation roles. The target is granted Site Admin (created
+   * if they had no membership row), and the outgoing owner is demoted to Editor
+   * — they keep working in the site but no longer administer it, which is the
+   * site-level analogue of Owner → Admin.
+   *
+   * Restricted to the current owner and organisation Owners/Admins. A second
+   * Site Admin holds `workspace.ownership.transfer` through their role, but
+   * letting them hand the site away from under its owner would make the
+   * ownership record meaningless.
+   */
+  async transferOwnership(
+    ctx: RequestContext,
+    workspaceId: string,
+    input: { email?: string; user_id?: string; confirm_name?: string },
+  ): Promise<{ user_id: string; email: string }> {
+    const workspace = await this.requireActive(workspaceId);
+    const isOrgAdmin = ctx.orgRole === 'owner' || ctx.orgRole === 'admin';
+
+    if (!isOrgAdmin && workspace.ownerId && workspace.ownerId !== ctx.userId) {
+      throw new AppError('insufficient_permission', 'Only the site owner can transfer this site.', {
+        detail:
+          'Site Admin is not enough to give the site away. Ask the current owner, or an ' +
+          'organisation Owner or Admin, to perform the transfer.',
+      });
+    }
+
+    if (input.confirm_name !== undefined && input.confirm_name.trim() !== workspace.name) {
+      throw new AppError('invalid_request', 'The name you typed does not match.', {
+        detail: `Type "${workspace.name}" exactly to confirm.`,
+      });
+    }
+
+    const target = await resolveOrganisationMember(this.prisma, workspace.organisationId, input);
+
+    if (target.userId === workspace.ownerId) {
+      throw new AppError('invalid_request', 'That person already owns this site.', {
+        detail: 'Enter the email address of the person you want to hand it to.',
+      });
+    }
+
+    const previousOwnerId = workspace.ownerId;
+    const previousOwner = previousOwnerId
+      ? await this.prisma.asSystem((tx) =>
+          tx.user.findUnique({ where: { id: previousOwnerId }, select: { email: true } }),
+        )
+      : null;
+    const actor = await this.prisma.asSystem((tx) =>
+      tx.user.findUnique({ where: { id: ctx.userId }, select: { fullName: true } }),
+    );
+
+    await this.prisma.asSystem(async (tx) => {
+      await tx.workspace.update({ where: { id: workspaceId }, data: { ownerId: target.userId } });
+
+      // The new owner must be able to administer what they now own, whether or
+      // not they already had a role here.
+      await tx.workspaceMember.upsert({
+        where: { workspaceId_userId: { workspaceId, userId: target.userId } },
+        create: {
+          id: newId(),
+          workspaceId,
+          userId: target.userId,
+          role: 'site_admin',
+          addedBy: ctx.userId,
+        },
+        update: { role: 'site_admin' },
+      });
+
+      // Demote the outgoing owner where they hold a stored role. An org
+      // Owner/Admin with no row keeps implicit Site Admin regardless (§3.3) —
+      // that is their organisation role talking, not site ownership.
+      if (previousOwnerId) {
+        await tx.workspaceMember.updateMany({
+          where: { workspaceId, userId: previousOwnerId, role: 'site_admin' },
+          data: { role: 'editor' },
+        });
+      }
+
+      await this.events.emit(
+        tx,
+        'workspace.ownership_transferred',
+        { from: previousOwnerId, to: target.userId },
+        { workspaceId, orgId: workspace.organisationId },
+      );
+
+      await this.audit.recordIn(tx, {
+        organisationId: workspace.organisationId,
+        workspaceId,
+        actorType: 'user',
+        actorId: ctx.userId,
+        action: 'workspace.ownership_transferred',
+        resourceType: 'workspace',
+        resourceId: workspaceId,
+        before: { owner: previousOwnerId },
+        after: { owner: target.userId, owner_email: target.email },
+        ip: ctx.ip,
+        userAgent: ctx.userAgent,
+        requestId: ctx.requestId,
+      });
+    });
+
+    await this.mail.sendOwnershipTransferred({
+      scope: 'site',
+      name: workspace.name,
+      newOwnerEmail: target.email,
+      previousOwnerEmail: previousOwner?.email ?? null,
+      actorName: actor?.fullName ?? null,
+    });
+
+    return { user_id: target.userId, email: target.email };
+  }
+
   // -- Members ---------------------------------------------------------------
 
   async listMembers(ctx: RequestContext, workspaceId: string): Promise<WorkspaceMemberDto[]> {
     const workspace = await this.prisma.asSystem((tx) =>
       tx.workspace.findFirstOrThrow({
         where: { id: workspaceId, deletedAt: null },
-        select: { organisationId: true },
+        select: { organisationId: true, ownerId: true },
       }),
     );
 
@@ -339,6 +456,7 @@ export class WorkspacesService {
           },
           role: m.role,
           inherited: false,
+          is_owner: m.userId === workspace.ownerId,
           added_at: m.createdAt.toISOString(),
         })),
         ...inherited.map((m) => ({
@@ -351,6 +469,7 @@ export class WorkspacesService {
           },
           role: 'site_admin' as WorkspaceRole,
           inherited: true,
+          is_owner: m.userId === workspace.ownerId,
           added_at: m.joinedAt.toISOString(),
         })),
       ];
@@ -373,6 +492,15 @@ export class WorkspacesService {
     if (!inOrg) {
       throw new AppError('invalid_request', 'That person is not in this organisation yet.', {
         detail: 'Invite them to the organisation first — you can grant this site role in the same invitation.',
+      });
+    }
+
+    // The owner is the site's guaranteed administrator. Demoting them through
+    // the members table would leave the site owned by someone who cannot
+    // administer it; the way to change who administers it is a transfer.
+    if (userId === workspace.ownerId && role !== 'site_admin') {
+      throw new AppError('unprocessable', 'This person owns the site.', {
+        detail: 'Transfer ownership to someone else first, then change their role.',
       });
     }
 
@@ -401,6 +529,12 @@ export class WorkspacesService {
 
   async removeMember(ctx: RequestContext, workspaceId: string, userId: string): Promise<void> {
     const workspace = await this.requireActive(workspaceId);
+
+    if (userId === workspace.ownerId) {
+      throw new AppError('unprocessable', 'This person owns the site.', {
+        detail: 'Transfer ownership to someone else first, then remove them.',
+      });
+    }
 
     const result = await this.prisma.asSystem((tx) =>
       tx.workspaceMember.deleteMany({ where: { workspaceId, userId } }),
@@ -502,6 +636,7 @@ function toWorkspaceDto(
     defaultLocale: string;
     locales: string[];
     status: 'active' | 'archived';
+    ownerId: string | null;
     createdAt: Date;
   },
   role: WorkspaceRole | null,
@@ -520,6 +655,7 @@ function toWorkspaceDto(
     locales: workspace.locales,
     status: workspace.status,
     role,
+    owner_id: workspace.ownerId,
     created_at: workspace.createdAt.toISOString(),
   };
 }

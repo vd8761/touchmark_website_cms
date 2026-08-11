@@ -86,6 +86,43 @@ export class MailService {
     }
   }
 
+  /**
+   * §6.1 security notification for an ownership change.
+   *
+   * Sent to the new owner and the outgoing one. The outgoing owner is the point
+   * of the mail: if the transfer was not theirs, this is how they find out
+   * while there is still time to act.
+   */
+  async sendOwnershipTransferred(context: {
+    scope: 'organisation' | 'site';
+    name: string;
+    newOwnerEmail: string;
+    previousOwnerEmail: string | null;
+    actorName: string | null;
+  }): Promise<void> {
+    const noun = context.scope === 'organisation' ? 'organisation' : 'site';
+    const who = context.actorName ?? 'An owner';
+    const subject = `Ownership of ${noun} "${context.name}" was transferred`;
+    const kept =
+      context.scope === 'organisation'
+        ? 'The previous owner keeps access as an Admin.'
+        : 'The previous owner keeps access as an Editor.';
+
+    await this.send(context.newOwnerEmail, subject, [
+      `${who} transferred the ${noun} "${context.name}" to you. You are now its owner.`,
+      kept,
+      'If you were not expecting this, contact the person who sent it before making changes.',
+    ]);
+
+    if (context.previousOwnerEmail && context.previousOwnerEmail !== context.newOwnerEmail) {
+      await this.send(context.previousOwnerEmail, subject, [
+        `Ownership of the ${noun} "${context.name}" has moved to ${context.newOwnerEmail}.`,
+        kept,
+        'If this was not you, contact support immediately — someone else can act as you.',
+      ]);
+    }
+  }
+
   async sendApiKeyRevokedNotice(
     to: string[],
     context: { workspaceName: string; keyName: string; actorName: string | null; reason?: string | null },

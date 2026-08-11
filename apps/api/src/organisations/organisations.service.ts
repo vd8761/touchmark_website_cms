@@ -7,6 +7,7 @@ import type { OrganisationDto, OrganisationMemberDto, OrgRole, WorkspaceRole } f
 import { AuditService } from '../audit/audit.service';
 import { AppError, conflict, notFound } from '../common/errors';
 import { MailService } from '../common/mail.service';
+import { resolveOrganisationMember } from '../common/member-lookup';
 import { PlatformAdminsService } from '../common/platform-admins.service';
 import { PrismaService } from '../common/prisma.service';
 import { RequestContext } from '../common/request-context';
@@ -518,20 +519,45 @@ export class OrganisationsService {
     await this.tokens.revokeAllForUser(userId, 'removed_from_organisation');
   }
 
-  async transferOwnership(ctx: RequestContext, orgId: string, newOwnerId: string): Promise<void> {
-    const target = await this.prisma.asSystem((tx) =>
-      tx.organisationMember.findFirst({ where: { organisationId: orgId, userId: newOwnerId } }),
+  /**
+   * Hands the organisation to another member, named by email address (§6.4).
+   *
+   * The caller is demoted to Admin rather than removed: losing access to your
+   * own organisation by transferring it would be a nasty surprise, and an
+   * organisation with no route back for its previous owner is a support ticket.
+   */
+  async transferOwnership(
+    ctx: RequestContext,
+    orgId: string,
+    input: { email?: string; user_id?: string; confirm_name?: string },
+  ): Promise<{ user_id: string; email: string }> {
+    const org = await this.prisma.asSystem((tx) =>
+      tx.organisation.findUnique({ where: { id: orgId }, select: { name: true } }),
     );
-    if (!target) {
-      throw new AppError('invalid_request', 'That person is not a member of this organisation.', {
-        detail: 'Invite them first, then transfer ownership.',
+    if (!org) throw notFound('Organisation', orgId);
+
+    // The portal asks for the name to be typed; a caller that sends it must
+    // send it correctly, so a mistyped confirmation never transfers anything.
+    if (input.confirm_name !== undefined && input.confirm_name.trim() !== org.name) {
+      throw new AppError('invalid_request', 'The name you typed does not match.', {
+        detail: `Type "${org.name}" exactly to confirm.`,
       });
     }
 
+    const target = await resolveOrganisationMember(this.prisma, orgId, input);
+
+    if (target.userId === ctx.userId) {
+      throw new AppError('invalid_request', 'You already own this organisation.', {
+        detail: 'Enter the email address of the person you want to hand it to.',
+      });
+    }
+
+    const actor = await this.prisma.asSystem((tx) =>
+      tx.user.findUnique({ where: { id: ctx.userId }, select: { email: true, fullName: true } }),
+    );
+
     await this.prisma.asSystem(async (tx) => {
-      await tx.organisationMember.update({ where: { id: target.id }, data: { role: 'owner' } });
-      // The previous owner is demoted to admin, not removed — losing access to
-      // your own organisation by transferring it would be a nasty surprise.
+      await tx.organisationMember.update({ where: { id: target.memberId }, data: { role: 'owner' } });
       await tx.organisationMember.updateMany({
         where: { organisationId: orgId, userId: ctx.userId },
         data: { role: 'admin' },
@@ -540,7 +566,7 @@ export class OrganisationsService {
       await this.events.emit(
         tx,
         'organisation.ownership_transferred',
-        { from: ctx.userId, to: newOwnerId },
+        { from: ctx.userId, to: target.userId },
         { orgId },
       );
       await this.audit.recordIn(tx, {
@@ -550,13 +576,26 @@ export class OrganisationsService {
         action: 'organisation.ownership_transferred',
         resourceType: 'organisation',
         resourceId: orgId,
-        before: { owner: ctx.userId },
-        after: { owner: newOwnerId },
+        before: { owner: ctx.userId, previous_role: target.role },
+        after: { owner: target.userId, owner_email: target.email },
         ip: ctx.ip,
         userAgent: ctx.userAgent,
         requestId: ctx.requestId,
       });
     });
+
+    // §6.1 requires a security notification for a change of this weight, and it
+    // goes to both parties — the new owner needs to know they now carry it, and
+    // the previous owner needs a record if it was not them who acted.
+    await this.mail.sendOwnershipTransferred({
+      scope: 'organisation',
+      name: org.name,
+      newOwnerEmail: target.email,
+      previousOwnerEmail: actor?.email ?? null,
+      actorName: actor?.fullName ?? null,
+    });
+
+    return { user_id: target.userId, email: target.email };
   }
 
   // -- helpers ---------------------------------------------------------------

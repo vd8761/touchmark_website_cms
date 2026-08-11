@@ -58,6 +58,7 @@ export const PERMISSIONS = [
   'workspace.member.manage',
   'workspace.settings.edit',
   'workspace.delete',
+  'workspace.ownership.transfer',
   'workspace.view',
 
   // Cross-cutting
@@ -275,6 +276,9 @@ const WRITE_VERBS = [
   'upload',
   'approve',
   'request',
+  // Handing a site to someone else is a write, and an archived site must not
+  // allow it — an archived site is read-only until it is restored.
+  'transfer',
 ];
 
 export function isWritePermission(permission: Permission): boolean {

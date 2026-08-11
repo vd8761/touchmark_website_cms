@@ -64,6 +64,12 @@ export interface WorkspaceDto {
   locales: string[];
   status: 'active' | 'archived';
   role: WorkspaceRole | null;
+  /**
+   * The one person accountable for this site. Always holds Site Admin, cannot be
+   * demoted or removed from the members list, and is transferred rather than
+   * edited. Null only for sites created before ownership was recorded.
+   */
+  owner_id: string | null;
   created_at: string;
 }
 
@@ -73,6 +79,8 @@ export interface WorkspaceMemberDto {
   role: WorkspaceRole;
   /** True when the role is inherited from an org Owner/Admin rather than stored (§3.3). */
   inherited: boolean;
+  /** The site owner. Always Site Admin; cannot be demoted or removed, only transferred. */
+  is_owner: boolean;
   added_at: string;
 }
 

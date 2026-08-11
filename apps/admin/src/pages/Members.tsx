@@ -89,11 +89,12 @@ export function Members() {
                     <p className="text-xs text-text-secondary">{member.user.email}</p>
                   </td>
                   <td className="px-5 py-3">
-                    {member.inherited || !manageable ? (
+                    {member.inherited || member.is_owner || !manageable ? (
                       <span className="flex items-center gap-2">
                         <span className="capitalize text-text">
                           {member.role.replace('_', ' ')}
                         </span>
+                        {member.is_owner && <Pill tone="success">Owner</Pill>}
                         {member.inherited && <Pill tone="accent">Inherited</Pill>}
                       </span>
                     ) : (
@@ -119,7 +120,7 @@ export function Members() {
                     {new Date(member.added_at).toLocaleDateString()}
                   </td>
                   <td className="px-5 py-3 text-right">
-                    {manageable && !member.inherited && (
+                    {manageable && !member.inherited && !member.is_owner && (
                       <button
                         type="button"
                         onClick={() => remove.mutate(member.user.id)}
@@ -140,6 +141,13 @@ export function Members() {
         <p className="text-xs text-text-secondary">
           Inherited members are organisation Owners and Admins. They hold Site Admin on every
           site — change their organisation role to revoke it.
+        </p>
+      )}
+
+      {members.some((m) => m.is_owner) && (
+        <p className="text-xs text-text-secondary">
+          The owner’s role cannot be changed here — a site always has someone accountable for it.
+          Hand it over from Site settings → Ownership.
         </p>
       )}
     </div>

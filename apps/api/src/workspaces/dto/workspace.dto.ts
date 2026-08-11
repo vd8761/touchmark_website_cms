@@ -4,6 +4,7 @@ import {
   ArrayMaxSize,
   IsArray,
   IsBoolean,
+  IsEmail,
   IsIn,
   IsOptional,
   IsString,
@@ -120,6 +121,34 @@ export class UpdateWorkspaceMemberDto {
   @ApiProperty({ enum: WORKSPACE_ROLES })
   @IsIn(WORKSPACE_ROLES)
   role!: WorkspaceRole;
+}
+
+/**
+ * Site ownership transfer. Named by email for the same reason the organisation
+ * one is: nobody knows a colleague's UUID. The target must already be in the
+ * organisation — a site grant to someone outside it would be orphaned the
+ * moment org membership was checked.
+ */
+export class TransferWorkspaceOwnershipDto {
+  @ApiPropertyOptional({
+    example: 'new.owner@acme.com',
+    description: 'Email of the organisation member who becomes the site owner.',
+  })
+  @IsOptional()
+  @IsEmail()
+  email?: string;
+
+  @ApiPropertyOptional({ description: 'The user id of the member who becomes the site owner.' })
+  @IsOptional()
+  @IsUUID()
+  user_id?: string;
+
+  @ApiPropertyOptional({
+    description: 'The exact site name, typed to confirm. Validated when supplied.',
+  })
+  @IsOptional()
+  @IsString()
+  confirm_name?: string;
 }
 
 export class DeleteWorkspaceDto {

@@ -40,6 +40,7 @@ const EVENT_GROUPS = [
       'workspace.archived',
       'workspace.restored',
       'workspace.deletion_scheduled',
+      'workspace.ownership_transferred',
     ],
   },
   {

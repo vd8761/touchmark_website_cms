@@ -217,6 +217,27 @@ export function WorkspaceSwitcher() {
             </ul>
           </div>
 
+          {/* The id of the site you are currently in, one click from anywhere.
+              Site settings has the full identifiers card; this is the shortcut
+              for when you just need to paste it into a request. */}
+          {currentWorkspace && (
+            <div className="flex items-center gap-2 border-t border-border px-3 py-2">
+              <span className="shrink-0 text-[10px] font-semibold uppercase tracking-wide text-text-secondary">
+                Site ID
+              </span>
+              <code className="min-w-0 flex-1 select-all truncate text-xs text-text-secondary">
+                {currentWorkspace.id}
+              </code>
+              <button
+                type="button"
+                onClick={() => void navigator.clipboard?.writeText(currentWorkspace.id)}
+                className="shrink-0 rounded px-1.5 py-0.5 text-xs text-accent hover:bg-surface-subtle"
+              >
+                Copy
+              </button>
+            </div>
+          )}
+
           <div className="border-t border-border p-1.5">
             <button
               type="button"

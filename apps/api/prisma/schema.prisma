@@ -155,6 +155,7 @@ model User {
   emailTokens          EmailToken[]
   sentInvitations      Invitation[]         @relation("InvitedBy")
   createdWorkspaces    Workspace[]          @relation("WorkspaceCreatedBy")
+  ownedWorkspaces      Workspace[]          @relation("WorkspaceOwnedBy")
 
   @@index([status])
   @@map("users")
@@ -619,6 +620,12 @@ model Workspace {
   settings      Json            @default("{}")
   createdBy     String?         @map("created_by") @db.Uuid
 
+  /// The site's owner — distinct from `createdBy`, which is history and never
+  /// changes. Ownership moves between people (§6.3 transfer); the owner always
+  /// holds Site Admin and cannot be demoted or removed from the members list,
+  /// so a site can never end up with nobody accountable for it.
+  ownerId String? @map("owner_id") @db.Uuid
+
   /// Set when a delete is requested; the 30-day soft-delete window of §6.3.
   purgeAfter DateTime? @map("purge_after") @db.Timestamptz(6)
 
@@ -634,6 +641,7 @@ model Workspace {
 
   organisation Organisation      @relation(fields: [organisationId], references: [id], onDelete: Cascade)
   creator      User?             @relation("WorkspaceCreatedBy", fields: [createdBy], references: [id], onDelete: SetNull)
+  owner        User?             @relation("WorkspaceOwnedBy", fields: [ownerId], references: [id], onDelete: SetNull)
   members      WorkspaceMember[]
   auditLogs    AuditLog[]
 
@@ -661,6 +669,7 @@ model Workspace {
 
   @@unique([organisationId, slug])
   @@index([organisationId, status])
+  @@index([ownerId])
   @@map("workspaces")
 }
 
