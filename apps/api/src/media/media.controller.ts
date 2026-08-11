@@ -16,6 +16,7 @@ import type { Request, Response } from 'express';
 
 import { Public, RequirePermission } from '../auth/permissions.decorator';
 import { AppError } from '../common/errors';
+import { sniffMimeType } from './image-metadata';
 import { MediaService } from './media.service';
 import { StorageService } from './storage';
 
@@ -306,7 +307,37 @@ export class LocalUploadController {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Cache-Control', 'public, max-age=3600');
 
+    // nosniff without a Content-Type is a refusal to render: the browser is told
+    // not to guess and given nothing to go on, so an <img> pointing here stays
+    // blank. The type comes from the object's own magic bytes rather than from
+    // the request or the filename — `complete` already deleted anything whose
+    // contents disagreed with its declared type, so this cannot be talked into
+    // labelling markup as an image.
+    const head = await this.readHead(local, key);
+    res.setHeader('Content-Type', sniffMimeType(head) ?? 'application/octet-stream');
+
     const stream = await local.read(key);
     stream.pipe(res);
+  }
+
+  /** First bytes of an object — enough for magic-byte detection, whatever its size. */
+  private async readHead(
+    local: NonNullable<StorageService['local']>,
+    key: string,
+    bytes = 64,
+  ): Promise<Buffer> {
+    const stream = await local.read(key);
+    const chunks: Buffer[] = [];
+    let size = 0;
+
+    for await (const chunk of stream) {
+      const buffer = Buffer.from(chunk);
+      chunks.push(buffer);
+      size += buffer.length;
+      if (size >= bytes) break;
+    }
+    stream.destroy();
+
+    return Buffer.concat(chunks).subarray(0, bytes);
   }
 }
