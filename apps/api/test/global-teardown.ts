@@ -96,7 +96,6 @@ export default async function globalTeardown(): Promise<void> {
     });
 
     if (orgs.count || removed.count) {
-      // eslint-disable-next-line no-console
       console.log(
         `\ne2e teardown: removed ${orgs.count} organisation(s) and ${removed.count} user(s).`,
       );
@@ -104,7 +103,6 @@ export default async function globalTeardown(): Promise<void> {
   } catch (error) {
     // A failed cleanup must never turn a green suite red — the tests already
     // ran and their result is the thing that matters.
-    // eslint-disable-next-line no-console
     console.warn(`e2e teardown skipped: ${(error as Error).message}`);
   } finally {
     await prisma.$disconnect();

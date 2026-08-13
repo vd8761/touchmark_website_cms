@@ -20,10 +20,13 @@
     "db:down": "docker compose down",
     "db:migrate": "npm run db:migrate --workspace @cms/api",
     "db:reset": "npm run db:reset --workspace @cms/api",
-    "openapi": "npm run openapi --workspace @cms/api"
+    "openapi": "npm run openapi --workspace @cms/api",
+    "test:browser": "playwright test",
+    "test:browser:ui": "playwright test --ui"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
+    "@playwright/test": "^1.62.1",
     "@types/node": "^22.10.2",
     "eslint": "^9.39.5",
     "eslint-plugin-react-hooks": "^5.2.0",

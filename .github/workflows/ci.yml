@@ -77,6 +77,23 @@ jobs:
       - name: Tenant isolation suite
         run: npm run test:isolation --workspace @cms/api
 
+      # §11.9. Four bugs reached main because nothing drove a browser — including
+      # one that broke every save after the access token expired, and one that
+      # signed a user out for having two tabs open. Neither is visible to a unit
+      # or API test, because the API was behaving correctly in both cases.
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Browser tests
+        run: npm run test:browser
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 7
+
       - name: Emit OpenAPI document
         run: npm run openapi --workspace @cms/api
 

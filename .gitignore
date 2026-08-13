@@ -14,3 +14,6 @@ apps/admin/dist/
 .media/
 apps/api/.media/
 .backups/
+apps/admin/e2e/.auth/
+test-results/
+playwright-report/

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { BubbleMenu, EditorContent, useEditor, type Editor } from '@tiptap/react';
 
 import { api } from '../../lib/api';
@@ -37,6 +37,18 @@ export function RichTextEditor({
   const [highlight, setHighlight] = useState(0);
   const containerRef = useRef<HTMLDivElement>(null);
 
+  /**
+   * Menu state, mirrored into refs.
+   *
+   * `handleKeyDown` below is registered once with ProseMirror and is not
+   * re-created per render, so it cannot read React state directly without
+   * capturing whichever value existed when the editor was constructed.
+   */
+  const slashRef = useRef<string | null>(null);
+  const highlightRef = useRef(0);
+  const filteredRef = useRef<BlockCommand[]>([]);
+  const runRef = useRef<(command: BlockCommand) => void>(() => {});
+
   const editor = useEditor({
     extensions: buildExtensions('Write, or press / to insert a block…'),
     // A malformed document must not take the editor down with it — the old
@@ -48,8 +60,85 @@ export function RichTextEditor({
       attributes: {
         class: 'rich-text-surface',
       },
+
+      /**
+       * The slash menu's keyboard handling belongs here, not on a wrapping div.
+       *
+       * ProseMirror listens on the contenteditable itself, so a handler on an
+       * ancestor only sees the event on the way back up — by which point Enter
+       * has already split the block and `preventDefault()` undoes nothing. That
+       * produced two headings: the query text left behind as one, and the real
+       * one after it.
+       *
+       * `handleKeyDown` is ProseMirror's own hook; returning true consumes the
+       * key before any default behaviour runs.
+       */
+      handleKeyDown(view, event) {
+        const query = slashRef.current;
+
+        if (query === null) {
+          if (event.key !== '/') return false;
+
+          // Only at a word boundary, or typing "and/or" pops a menu mid-word.
+          const { $from } = view.state.selection;
+          const before = $from.parent.textBetween(
+            Math.max(0, $from.parentOffset - 1),
+            $from.parentOffset,
+          );
+          if (before === '' || before === ' ') {
+            slashRef.current = '';
+            setSlashQuery('');
+            setHighlight(0);
+          }
+          // Let the "/" through: it is real text until a command replaces it.
+          return false;
+        }
+
+        if (event.key === 'Escape') {
+          closeSlash();
+          return true;
+        }
+
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          const next = highlightRef.current + (event.key === 'ArrowDown' ? 1 : -1);
+          setHighlight(Math.max(0, Math.min(filteredRef.current.length - 1, next)));
+          return true;
+        }
+
+        if (event.key === 'Enter') {
+          const command = filteredRef.current[highlightRef.current];
+          if (!command) {
+            closeSlash();
+            return false;
+          }
+          runRef.current(command);
+          return true;
+        }
+
+        if (event.key === 'Backspace') {
+          if (query === '') closeSlash();
+          else {
+            slashRef.current = query.slice(0, -1);
+            setSlashQuery(slashRef.current);
+          }
+          return false;
+        }
+
+        if (event.key.length === 1) {
+          slashRef.current = query + event.key;
+          setSlashQuery(slashRef.current);
+          setHighlight(0);
+        }
+
+        return false;
+      },
     },
   });
+
+  function closeSlash() {
+    slashRef.current = null;
+    setSlashQuery(null);
+  }
 
   // Re-sync when the entry is reloaded from the server — after a save, a
   // publish or a version restore. Guarded on equality, because feeding the
@@ -78,18 +167,16 @@ export function RichTextEditor({
     );
   }, [commands, slashQuery]);
 
-  if (!editor) return null;
+  const runCommand = useCallback(
+    (command: BlockCommand) => {
+      if (!editor) return;
 
-  const runCommand = (command: BlockCommand) => {
-    // Remove the "/query" the user typed, or it is left stranded in the block.
-    //
-    // The range comes from the *document*, not from `slashQuery.length`. React
-    // state lags behind fast typing — each keystroke's handler closes over the
-    // value from its own render — so measuring the deletion that way removed
-    // the wrong number of characters and left "/h" in front of a heading.
-    // Searching back for the "/" cannot be stale, because the text it inspects
-    // is the text on screen.
-    if (slashQuery !== null) {
+      // Remove the "/query" the user typed, or it is left stranded in the block.
+      //
+      // The range comes from the *document*, not from a character count. React
+      // state lags behind fast typing, so measuring the deletion that way
+      // removed the wrong number of characters; searching back for the "/"
+      // cannot be stale, because it inspects the text actually on screen.
       const { $from, from } = editor.state.selection;
       const textBefore = $from.parent.textBetween(0, $from.parentOffset, undefined, '￼');
       const slashAt = textBefore.lastIndexOf('/');
@@ -101,11 +188,21 @@ export function RichTextEditor({
           .deleteRange({ from: from - (textBefore.length - slashAt), to: from })
           .run();
       }
-    }
 
-    setSlashQuery(null);
-    command.run();
-  };
+      slashRef.current = null;
+      setSlashQuery(null);
+      command.run();
+    },
+    [editor],
+  );
+
+  // Kept current for `handleKeyDown`, which is registered once and would
+  // otherwise read whatever these were when the editor was constructed.
+  filteredRef.current = filtered;
+  highlightRef.current = highlight;
+  runRef.current = runCommand;
+
+  if (!editor) return null;
 
   return (
     <div className="space-y-2" ref={containerRef}>
@@ -123,51 +220,7 @@ export function RichTextEditor({
             <SelectionButtons editor={editor} />
           </BubbleMenu>
 
-          <div
-            className="rounded-lg border border-border bg-surface px-3 py-2"
-            onKeyDown={(event) => {
-              if (slashQuery === null) {
-                // Only open on a "/" that begins a word — otherwise typing
-                // "and/or" pops a menu mid-sentence.
-                if (event.key === '/' && editor.state.selection.empty) {
-                  const { $from } = editor.state.selection;
-                  const before = $from.nodeBefore?.text?.slice(-1) ?? '';
-                  if (before === '' || before === ' ') {
-                    setSlashQuery('');
-                    setHighlight(0);
-                  }
-                }
-                return;
-              }
-
-              if (event.key === 'Escape') {
-                setSlashQuery(null);
-                event.preventDefault();
-                return;
-              }
-              if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
-                event.preventDefault();
-                setHighlight((current) => {
-                  const next = event.key === 'ArrowDown' ? current + 1 : current - 1;
-                  return Math.max(0, Math.min(filtered.length - 1, next));
-                });
-                return;
-              }
-              if (event.key === 'Enter' && filtered[highlight]) {
-                event.preventDefault();
-                runCommand(filtered[highlight]);
-                return;
-              }
-              if (event.key === 'Backspace' && slashQuery === '') {
-                setSlashQuery(null);
-                return;
-              }
-              if (event.key.length === 1) {
-                setSlashQuery(slashQuery + event.key);
-                setHighlight(0);
-              }
-            }}
-          >
+          <div className="rounded-lg border border-border bg-surface px-3 py-2">
             <EditorContent editor={editor} />
           </div>
 
