@@ -8,7 +8,6 @@ on:
 env:
   DATABASE_ADMIN_URL: postgresql://cms:cms@localhost:5432/cms?schema=public
   DATABASE_URL: postgresql://cms_app:cms_app@localhost:5432/cms?schema=public
-  REDIS_URL: redis://localhost:6379
   JWT_SECRET: ci-secret-key-that-is-at-least-32-characters-long
   PASSWORD_PWNED_CHECK: 'false'
   COOKIE_SECURE: 'false'
@@ -31,13 +30,6 @@ jobs:
         options: >-
           --health-cmd "pg_isready -U cms" --health-interval 5s
           --health-timeout 5s --health-retries 20
-
-      redis:
-        image: redis:7
-        ports: ['6379:6379']
-        options: >-
-          --health-cmd "redis-cli ping" --health-interval 5s
-          --health-timeout 3s --health-retries 20
 
     steps:
       - uses: actions/checkout@v4
@@ -66,6 +58,9 @@ jobs:
       # wrong reason — as the table owner, every policy is bypassed.
       - name: Apply row-level security policies
         run: npm run db:rls --workspace @cms/api
+
+      - name: Lint
+        run: npm run lint --workspaces --if-present
 
       - name: Typecheck API
         run: npm run build --workspace @cms/api

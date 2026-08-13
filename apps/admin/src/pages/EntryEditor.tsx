@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
@@ -12,7 +12,9 @@ import {
   type EntryDto,
   type VersionDto,
 } from '../lib/content-types';
+import { VersionCompare } from '../components/VersionCompare';
 import { useSession } from '../lib/session';
+import { useAutosave, type AutosaveState } from '../lib/use-autosave';
 
 /**
  * The entry editor of §17.5 — schema-driven form, status rail, version history.
@@ -39,6 +41,12 @@ export function EntryEditor() {
   const [actionError, setActionError] = useState<ApiError | null>(null);
   const [scheduleAt, setScheduleAt] = useState('');
   const [showVersions, setShowVersions] = useState(false);
+  const [comparing, setComparing] = useState(false);
+
+  /** The version our own save produced, so the reset effect can ignore it. */
+  const selfSavedVersion = useRef<number | null>(null);
+  /** What the in-flight request carried, to detect typing during it. */
+  const sentSnapshot = useRef<string>('');
 
   const typesQuery = useQuery({
     queryKey: ['content-types', ws],
@@ -63,16 +71,33 @@ export function EntryEditor() {
 
   // Reset the working copy whenever the server's version changes — after a
   // save, a publish, or a restore.
+  //
+  // Except when *we* caused the change. Our own save bumps current_version,
+  // which would fire this and overwrite the editor with the copy the server
+  // echoed back — discarding anything typed while the request was in flight.
+  // Manual saves made that a narrow race; autosaving every three seconds would
+  // make it a routine way to lose a sentence.
   useEffect(() => {
     if (!entry) return;
+    if (entry.current_version === selfSavedVersion.current) return;
+
     setDraft(entry.data ?? {});
     setSlugDraft(null);
     setDirty(false);
+    // Keyed on the identity and version rather than on `entry` itself: the
+    // query returns a new object on every refetch, and depending on it would
+    // discard whatever the author had typed since the last save.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entry?.id, entry?.current_version]);
 
   const save = useMutation({
-    mutationFn: () =>
-      api.patch<EntryDto>(entryPath, {
+    mutationFn: (options: { autosave?: boolean } = {}) => {
+      // Captured before the request so the comparison in onSuccess is against
+      // what was actually sent, not against whatever has been typed since.
+      const sent = JSON.stringify({ data: draft, slug: slugDraft });
+      sentSnapshot.current = sent;
+
+      return api.patch<EntryDto>(entryPath, {
         data: draft,
         // Only sent when edited, so an untouched slug keeps auto-deriving from
         // the title instead of being pinned to its placeholder.
@@ -80,12 +105,23 @@ export function EntryEditor() {
         // Optimistic concurrency: a second editor's save turns this into a 409
         // rather than silently discarding their work.
         expected_version: entry?.current_version,
-      }),
+        ...(options.autosave ? { autosave: true } : {}),
+      });
+    },
     onSuccess: (updated) => {
       setFieldErrors({});
       setActionError(null);
+
+      // Suppresses the reset effect for the version we just produced.
+      selfSavedVersion.current = updated.current_version;
       queryClient.setQueryData(['entry', entryId], updated);
       void queryClient.invalidateQueries({ queryKey: ['entries', ws] });
+
+      // Still dirty if the author kept typing while the request was in flight —
+      // marking it clean would leave those keystrokes unsaved with the UI
+      // claiming otherwise, which is the one thing autosave must never do.
+      const current = JSON.stringify({ data: draft, slug: slugDraft });
+      setDirty(current !== sentSnapshot.current);
     },
     onError: (error) => handleError(error as ApiError),
   });
@@ -126,17 +162,58 @@ export function EntryEditor() {
     }
   }
 
+  /**
+   * §7.3: "autosave every 3s of inactivity — never over a published version."
+   *
+   * The exclusion is the important half. A PATCH to a published entry does not
+   * touch what is live — it accumulates unpublished changes — but it does flip
+   * the entry into "has unpublished changes", and doing that silently, because
+   * someone clicked into a live page and typed a character, is not a decision
+   * the editor should make for them. On a published entry the dirty bar and ⌘S
+   * remain the only way to save.
+   */
+  const autosaveAllowed = Boolean(entry) && entry?.status !== 'published' && can('content.edit');
+
+  const autosave = useAutosave({
+    enabled: autosaveAllowed && dirty && !save.isPending,
+    content: JSON.stringify({ data: draft, slug: slugDraft }),
+    onSave: () => save.mutateAsync({ autosave: true }),
+  });
+
   // ⌘S saves — §17.5's keyboard map.
   useEffect(() => {
     function onKeyDown(event: KeyboardEvent) {
       if ((event.metaKey || event.ctrlKey) && event.key === 's') {
         event.preventDefault();
-        if (dirty) save.mutate();
+        // Clears a paused autosave too: pressing save is the author dealing
+        // with whatever stopped it.
+        if (dirty) {
+          autosave.resume();
+          save.mutate({});
+        }
       }
     }
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [dirty, save]);
+  }, [dirty, save, autosave]);
+
+  /**
+   * The browser's own "leave site?" prompt, as a backstop.
+   *
+   * Autosave narrows the window in which work can be lost to the last few
+   * seconds; it does not close it. A crash or a closed tab mid-pause still
+   * costs whatever was typed since the last save.
+   */
+  useEffect(() => {
+    if (!dirty) return;
+
+    function onBeforeUnload(event: BeforeUnloadEvent) {
+      event.preventDefault();
+      event.returnValue = '';
+    }
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [dirty]);
 
   const visibleFields = useMemo(
     () => (type?.fields ?? []).filter((field) => !field.deprecated),
@@ -193,7 +270,15 @@ export function EntryEditor() {
           <Button variant="ghost" onClick={() => setShowVersions((v) => !v)}>
             History
           </Button>
-          <Button variant="secondary" loading={save.isPending} disabled={!dirty} onClick={() => save.mutate()}>
+          <Button
+            variant="secondary"
+            loading={save.isPending}
+            disabled={!dirty}
+            onClick={() => {
+              autosave.resume();
+              save.mutate({});
+            }}
+          >
             {dirty ? 'Save' : 'Saved'}
           </Button>
           {canPublish &&
@@ -358,34 +443,97 @@ export function EntryEditor() {
               <p className="text-xs text-text-secondary">
                 Restoring appends a new version rather than rewinding, so nothing is lost.
               </p>
+              {(versionsQuery.data?.items.length ?? 0) > 1 && (
+                <Button variant="secondary" onClick={() => setComparing(true)}>
+                  Compare versions
+                </Button>
+              )}
             </Card>
           )}
         </div>
       </div>
 
-      {dirty && (
+      {comparing && (
+        <VersionCompare
+          entryPath={entryPath}
+          versions={versionsQuery.data?.items ?? []}
+          fields={visibleFields}
+          currentVersion={entry.current_version}
+          canRestore={can('content.edit')}
+          onClose={() => setComparing(false)}
+          onRestore={(version) => {
+            setComparing(false);
+            restore.mutate(version);
+          }}
+        />
+      )}
+
+      {(dirty || autosave.state.status === 'saved') && (
         <div className="fixed inset-x-0 bottom-0 border-t border-border bg-surface-raised px-6 py-3">
-          <div className="mx-auto flex max-w-5xl items-center justify-between">
-            <p className="text-sm text-text-secondary">Unsaved changes · ⌘S to save</p>
+          <div className="mx-auto flex max-w-5xl items-center justify-between gap-4">
+            <p className="text-sm text-text-secondary">
+              {saveStatusLabel(autosave.state, dirty, autosaveAllowed)}
+            </p>
             <div className="flex gap-2">
-              <Button
-                variant="ghost"
-                onClick={() => {
-                  setDraft(entry.data ?? {});
-                  setSlugDraft(null);
-                  setDirty(false);
-                  setFieldErrors({});
-                }}
-              >
-                Discard
-              </Button>
-              <Button variant="primary" loading={save.isPending} onClick={() => save.mutate()}>
-                Save
-              </Button>
+              {dirty && (
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    autosave.cancel();
+                    setDraft(entry.data ?? {});
+                    setSlugDraft(null);
+                    setDirty(false);
+                    setFieldErrors({});
+                  }}
+                >
+                  Discard
+                </Button>
+              )}
+              {dirty && (
+                <Button
+                  variant="primary"
+                  loading={save.isPending}
+                  onClick={() => {
+                    autosave.resume();
+                    save.mutate({});
+                  }}
+                >
+                  Save
+                </Button>
+              )}
             </div>
           </div>
         </div>
       )}
     </div>
   );
+}
+
+/**
+ * What the bar says, in the author's terms.
+ *
+ * "Saving…" and "Saved at 14:32" are the two states that actually reassure
+ * someone that their work is safe; everything else here exists so the bar never
+ * claims to have saved something it has not.
+ */
+function saveStatusLabel(state: AutosaveState, dirty: boolean, autosaveAllowed: boolean): string {
+  if (!autosaveAllowed) {
+    // Naming the reason: otherwise a published entry looks like autosave is
+    // simply broken.
+    return dirty ? 'Unsaved changes · ⌘S to save — published entries do not autosave' : '';
+  }
+
+  switch (state.status) {
+    case 'saving':
+      return 'Saving…';
+    case 'saved':
+      return dirty
+        ? 'Unsaved changes'
+        : `Saved at ${state.at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+    case 'paused':
+      return 'Autosave stopped — resolve the error above, then save';
+    case 'pending':
+    default:
+      return 'Unsaved changes · saving shortly, or ⌘S';
+  }
 }
