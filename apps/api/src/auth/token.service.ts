@@ -173,10 +173,21 @@ export class TokenService {
 
   /**
    * Checked on every request so a revoked session stops working within seconds
-   * rather than at token expiry (§6.4). The in-process map absorbs the common
-   * case; the database is the authority, and it is consulted whenever the map
-   * misses — so on another instance a revoked session survives exactly one
-   * request, not until the token expires.
+   * rather than at token expiry (§6.4).
+   *
+   * **The map is a positive cache and only ever a positive cache.** It answers
+   * "already known revoked" and nothing else; every other outcome falls through
+   * to the database. That asymmetry is the whole design, and it is what makes
+   * this correct on any number of instances: a session revoked on instance A
+   * misses B's map, B queries, B sees `revoked_at`, and the request is refused
+   * on its first attempt. There is no window during which another instance
+   * serves a revoked session.
+   *
+   * The cost is a read per authenticated request when the session is valid. Do
+   * not "optimise" that away with a negative cache — caching *validity* is
+   * precisely what would create the staleness this design avoids, and it would
+   * hand an attacker with a stolen access token a guaranteed grace period after
+   * the victim revokes.
    */
   async isSessionRevoked(sessionId: string): Promise<boolean> {
     if (this.revokedSessions.has(sessionId)) return true;
