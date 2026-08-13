@@ -1,9 +1,30 @@
-import { useState } from 'react';
+import { lazy, Suspense, useState } from 'react';
 
 import type { FieldDto } from '../lib/content-types';
 import { EntryPicker } from './EntryPicker';
 import { MediaPicker, MediaThumbnails } from './MediaPicker';
 import { Button, Field, Input, cx } from './primitives';
+/**
+ * Loaded on demand.
+ *
+ * TipTap and ProseMirror are ~430KB raw, and eagerly importing them put that in
+ * the entry bundle every visitor downloads — including on the login screen, for
+ * an editor most sessions never open. Split out, it arrives only when an entry
+ * actually has a rich-text field.
+ */
+const RichTextEditor = lazy(() =>
+  import('./rich-text/RichTextEditor').then((module) => ({ default: module.RichTextEditor })),
+);
+
+/** A value the block editor can open: a ProseMirror document, or nothing yet. */
+function isRichTextDocument(value: unknown): boolean {
+  return (
+    typeof value === 'object' &&
+    value !== null &&
+    !Array.isArray(value) &&
+    (value as { type?: string }).type === 'doc'
+  );
+}
 
 /**
  * Renders one schema-defined field as an input (§17.5, centre column).
@@ -55,31 +76,42 @@ export function FieldInput({
         );
 
       case 'rich_text':
-        // Structured JSON per Open Decision #3. A block editor lands with the
-        // rich-text work; until then this edits the document directly rather
-        // than pretending to be WYSIWYG.
-        return (
+        // Structured JSON per Open Decision #3, now edited as blocks. The
+        // stored shape is unchanged — the editor reads and writes the same
+        // document the textarea did.
+        //
+        // A value that is not a `doc` can exist: the old textarea accepted any
+        // JSON, and kept the raw string while you were mid-keystroke. Rather
+        // than silently discarding that content by opening an empty editor, it
+        // falls back to the raw view so it can be recovered.
+        return isRichTextDocument(value) || value == null || value === '' ? (
+          <Suspense
+            fallback={
+              <div className="min-h-[16rem] animate-pulse rounded-lg border border-border bg-surface-subtle" />
+            }
+          >
+            <RichTextEditor value={value} disabled={disabled} onChange={onChange} />
+          </Suspense>
+        ) : (
           <div className="space-y-1">
+            <p className="rounded-lg border border-warning/40 bg-warning/10 px-2.5 py-1.5 text-xs text-text-secondary">
+              This value is not a rich-text document, so the block editor cannot open it. Fix it
+              here — or clear it — and the editor takes over.
+            </p>
             <textarea
-              value={value ? JSON.stringify(value, null, 2) : ''}
+              value={typeof value === 'string' ? value : JSON.stringify(value, null, 2)}
               disabled={disabled}
               rows={8}
               onChange={(event) => {
                 try {
                   onChange(event.target.value ? JSON.parse(event.target.value) : null);
                 } catch {
-                  // Keep the raw text so a half-typed document is not discarded
-                  // mid-keystroke; validation reports it on save.
                   onChange(event.target.value);
                 }
               }}
               className="w-full rounded-lg border border-border bg-surface px-3 py-2 font-mono text-xs text-text"
               placeholder='{ "type": "doc", "content": [] }'
             />
-            <p className="text-xs text-text-secondary">
-              Structured document. A visual editor replaces this input; the stored shape does not
-              change.
-            </p>
           </div>
         );
 

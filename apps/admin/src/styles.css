@@ -53,3 +53,112 @@
     @apply outline-none ring-2 ring-accent ring-offset-2 ring-offset-surface;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   Rich-text editor
+   ---------------------------------------------------------------------------
+   ProseMirror ships no visual defaults, and Tailwind's preflight strips the
+   browser's — so without this an H2 renders identically to a paragraph and the
+   editor gives no feedback that a block command did anything.
+
+   These styles are the *editing* surface only. What a consuming site does with
+   the document is its own decision; nothing here is served by the API. */
+@layer components {
+  .rich-text-surface {
+    @apply min-h-[16rem] text-sm leading-relaxed text-text outline-none;
+  }
+
+  .rich-text-surface > * + * {
+    @apply mt-3;
+  }
+
+  .rich-text-surface h2 {
+    @apply mt-6 text-xl font-semibold text-text;
+  }
+  .rich-text-surface h3 {
+    @apply mt-5 text-lg font-semibold text-text;
+  }
+  .rich-text-surface h4 {
+    @apply mt-4 text-base font-semibold text-text;
+  }
+
+  .rich-text-surface ul {
+    @apply list-disc pl-5;
+  }
+  .rich-text-surface ol {
+    @apply list-decimal pl-5;
+  }
+  .rich-text-surface li > p {
+    @apply my-0;
+  }
+
+  .rich-text-surface blockquote {
+    @apply border-l-2 border-accent pl-3 italic text-text-secondary;
+  }
+
+  .rich-text-surface code {
+    @apply rounded bg-surface-subtle px-1 py-px font-mono text-[0.85em];
+  }
+  .rich-text-surface pre {
+    @apply overflow-x-auto rounded-lg bg-surface-subtle p-3 font-mono text-xs;
+  }
+  .rich-text-surface pre code {
+    @apply bg-transparent p-0;
+  }
+
+  .rich-text-surface hr {
+    @apply border-t border-border;
+  }
+
+  .rich-text-surface a {
+    @apply text-accent underline underline-offset-2;
+  }
+
+  .rich-text-surface img {
+    @apply max-w-full rounded-lg;
+  }
+
+  /* A table with no borders is unreadable while editing, whatever the site
+     eventually renders. */
+  .rich-text-surface table {
+    @apply w-full table-fixed border-collapse;
+  }
+  .rich-text-surface th,
+  .rich-text-surface td {
+    @apply border border-border px-2 py-1 align-top;
+  }
+  .rich-text-surface th {
+    @apply bg-surface-subtle font-semibold;
+  }
+
+  .rich-text-surface aside[data-callout] {
+    @apply rounded-lg border border-border bg-surface-subtle px-3 py-2;
+  }
+  .rich-text-surface aside[data-callout][data-tone='warning'] {
+    @apply border-warning/40 bg-warning/10;
+  }
+
+  /* Atom nodes have no editable content, so they need to look like objects
+     rather than like text you can put a cursor in. */
+  .rich-text-surface a[data-cta] {
+    @apply inline-block rounded-lg bg-accent px-3 py-1.5 text-sm font-medium text-accent-fg no-underline;
+  }
+
+  .rich-text-surface div[data-embed] {
+    @apply rounded-lg border border-dashed border-border px-3 py-4 text-center text-xs text-text-secondary;
+  }
+  .rich-text-surface div[data-embed]::before {
+    content: 'Embed — ' attr(src);
+  }
+
+  .rich-text-surface .ProseMirror-selectednode {
+    @apply ring-2 ring-accent;
+  }
+
+  /* The placeholder only belongs on a genuinely empty document; showing it on
+     every empty paragraph turns a draft into a wall of grey prompts. */
+  .rich-text-surface p.is-editor-empty:first-child::before {
+    content: attr(data-placeholder);
+    @apply pointer-events-none float-left h-0 text-text-secondary;
+  }
+}
