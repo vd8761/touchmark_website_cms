@@ -39,6 +39,27 @@ and neither reachable by any test that does not drive a real browser.
    during testing actually was.*
 3. **Developer guide printed a literal `{BASE}`** in the `/v1/me` sample instead of the URL.
 
+### Second pass — the block editor
+
+| | |
+|---|---|
+| ✅ 5.1 | Editor mounts, toolbar and outline rail render, placeholder shows |
+| ✅ 5.3–5.4 | Slash menu opens at a word boundary and filters (`/head` → the three headings) |
+| ✅ 5.5 | Enter inserts the block — H2 applied, styled larger |
+| ✅ 5.9 | Outline populates from headings |
+| ❌→fixed | **The slash query was not fully removed.** `/head` + Enter produced a heading reading `/hWhy foxes matter`. The deletion range was computed from `slashQuery.length` — React state that lags behind fast typing, since each keystroke's handler closes over its own render's value. It now searches the *document* backwards for the `/`, which cannot be stale because it inspects the text on screen. |
+
+**Fix status: unverified end to end.** It typechecks and builds, and the reasoning is sound, but I
+could not re-drive the editor to confirm it. The automation harness delivers keystrokes to
+ProseMirror only intermittently — the element reports focused and `contenteditable=true`, the
+session is valid, and typed characters still do not always arrive. That makes further results
+untrustworthy rather than informative, so the remaining editor rows (5.6–5.8, 5.10–5.22), autosave
+(§6) and version comparison (§7) stay unchecked.
+
+**This is the case for Playwright**, which drives ProseMirror with real user-event semantics
+instead of synthesised key events. Every row below marked ⬜ is a coin flip until then, and the one
+bug this pass did find was invisible to 322 passing tests.
+
 ### Not a bug, but worth recording
 
 Querying `content_types` with a plain Prisma client returns **zero rows** — RLS is doing its job,

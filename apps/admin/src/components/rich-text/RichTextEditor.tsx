@@ -81,12 +81,28 @@ export function RichTextEditor({
   if (!editor) return null;
 
   const runCommand = (command: BlockCommand) => {
-    // Remove the "/query" the user typed before inserting, or it is left
-    // stranded in the paragraph above the new block.
+    // Remove the "/query" the user typed, or it is left stranded in the block.
+    //
+    // The range comes from the *document*, not from `slashQuery.length`. React
+    // state lags behind fast typing — each keystroke's handler closes over the
+    // value from its own render — so measuring the deletion that way removed
+    // the wrong number of characters and left "/h" in front of a heading.
+    // Searching back for the "/" cannot be stale, because the text it inspects
+    // is the text on screen.
     if (slashQuery !== null) {
-      const { from } = editor.state.selection;
-      editor.chain().focus().deleteRange({ from: from - (slashQuery.length + 1), to: from }).run();
+      const { $from, from } = editor.state.selection;
+      const textBefore = $from.parent.textBetween(0, $from.parentOffset, undefined, '￼');
+      const slashAt = textBefore.lastIndexOf('/');
+
+      if (slashAt !== -1) {
+        editor
+          .chain()
+          .focus()
+          .deleteRange({ from: from - (textBefore.length - slashAt), to: from })
+          .run();
+      }
     }
+
     setSlashQuery(null);
     command.run();
   };
