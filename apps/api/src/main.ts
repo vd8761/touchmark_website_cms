@@ -11,6 +11,7 @@ import express from 'express';
 import helmet from 'helmet';
 
 import { AppModule } from './app.module';
+import { JsonLogger } from './observability/json-logger';
 import { buildOpenApi } from './openapi';
 
 /**
@@ -25,7 +26,10 @@ function isApiPath(path: string): boolean {
 }
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule, { bufferLogs: false });
+  // Installed before the module graph initialises, so provider bootstrap logs
+  // are structured too — those are the lines you need when a deploy fails to
+  // come up, and they are exactly the ones a later `useLogger` would miss.
+  const app = await NestFactory.create(AppModule, { logger: JsonLogger.create() });
   const config = app.get(ConfigService);
 
   app.use(cookieParser());
