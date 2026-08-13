@@ -1,5 +1,5 @@
-import { Body, Controller, Get, HttpCode, Param, Patch, Post, Req } from '@nestjs/common';
-import { ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Get, HttpCode, Param, Patch, Post, Query, Req } from '@nestjs/common';
+import { ApiOperation, ApiParam, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 
 import { RequirePermission } from '../auth/permissions.decorator';
@@ -81,11 +81,20 @@ export class ApiKeysController {
   @RequirePermission('apilog.view')
   @ApiOperation({
     summary: 'List API key request logs',
-    description: 'Returns the 50 most recent Delivery API requests recorded for this key.',
+    description:
+      'Delivery API requests recorded for this key, newest first. Cursor pagination via ' +
+      '`?cursor=` and `?limit=`. Retention is set by `API_REQUEST_LOG_RETENTION_DAYS`.',
   })
-  async logs(@Param('workspaceId') workspaceId: string, @Param('keyId') keyId: string) {
-    const data = await this.apiKeys.listRequestLogs(workspaceId, keyId);
-    return { data, meta: { total: data.length } };
+  @ApiQuery({ name: 'limit', required: false, description: 'Rows per page, 1–100. Default 25.' })
+  @ApiQuery({ name: 'cursor', required: false, description: 'The `next_cursor` of the last page.' })
+  async logs(
+    @Param('workspaceId') workspaceId: string,
+    @Param('keyId') keyId: string,
+    @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
+  ) {
+    const page = await this.apiKeys.listRequestLogs(workspaceId, keyId, { limit, cursor });
+    return { data: page.items, meta: page.meta };
   }
 
   @Post(':keyId/revoke')

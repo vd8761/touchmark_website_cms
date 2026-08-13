@@ -1,7 +1,20 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, Patch, Post, Req } from '@nestjs/common';
-import { ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  HttpCode,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Req,
+} from '@nestjs/common';
+import { ApiOperation, ApiParam, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 
+import { toAuditLogDto } from '../audit/audit-log.dto';
+import { pageArgs, parseLimit, toPage } from '../common/pagination';
 import { PrismaService } from '../common/prisma.service';
 import { RequireOrgPermission } from '../auth/permissions.decorator';
 import {
@@ -214,31 +227,29 @@ export class OrganisationsController {
     summary: 'Organisation audit log',
     description: 'Append-only. Newest first. Cursor pagination via `?cursor=` and `?limit=`.',
   })
-  async auditLogs(@Param('orgId') orgId: string) {
-    const rows = await this.prisma.asSystem((tx) =>
-      tx.auditLog.findMany({
-        where: { organisationId: orgId },
-        orderBy: { occurredAt: 'desc' },
-        take: 50,
-      }),
+  @ApiQuery({ name: 'limit', required: false, description: 'Rows per page, 1–100. Default 25.' })
+  @ApiQuery({ name: 'cursor', required: false, description: 'The `next_cursor` of the last page.' })
+  async auditLogs(
+    @Param('orgId') orgId: string,
+    @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
+  ) {
+    const take = parseLimit(limit);
+    const where = { organisationId: orgId };
+
+    const [rows, total] = await this.prisma.asSystem((tx) =>
+      Promise.all([
+        tx.auditLog.findMany({
+          where,
+          orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
+          ...pageArgs(take, cursor),
+        }),
+        tx.auditLog.count({ where }),
+      ]),
     );
 
-    return {
-      data: rows.map((r) => ({
-        id: r.id,
-        actor_type: r.actorType,
-        actor_id: r.actorId,
-        action: r.action,
-        resource_type: r.resourceType,
-        resource_id: r.resourceId,
-        before: r.before,
-        after: r.after,
-        ip: r.ip,
-        request_id: r.requestId,
-        occurred_at: r.occurredAt.toISOString(),
-      })),
-      meta: { total: rows.length, limit: 50, has_more: rows.length === 50 },
-    };
+    const page = toPage(rows, take, total);
+    return { data: page.items.map(toAuditLogDto), meta: page.meta };
   }
 }
 

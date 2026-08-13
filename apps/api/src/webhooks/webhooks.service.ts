@@ -6,6 +6,7 @@ import { Prisma } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { conflict, invalid, notFound } from '../common/errors';
 import { CryptoService } from '../common/crypto.service';
+import { pageArgs, parseLimit, toPage, type PageQuery } from '../common/pagination';
 import { PrismaService } from '../common/prisma.service';
 import { RequestContext } from '../common/request-context';
 import { newId } from '../common/uuid';
@@ -121,16 +122,32 @@ export class WebhooksService implements OnModuleInit {
     });
   }
 
-  async listDeliveries(workspaceId: string, webhookId: string) {
+  /**
+   * Delivery attempts for one endpoint.
+   *
+   * Paginated for the same reason as the request log: the attempt someone needs
+   * to see is the one that failed, and on a busy endpoint that is not in the
+   * newest fifty.
+   */
+  async listDeliveries(workspaceId: string, webhookId: string, query: PageQuery = {}) {
     await this.requireEndpoint(workspaceId, webhookId);
-    const rows = await this.prisma.withWorkspaceScope(workspaceId, (tx) =>
-      tx.webhookDelivery.findMany({
-        where: { workspaceId, webhookId },
-        orderBy: { createdAt: 'desc' },
-        take: 50,
-      }),
+
+    const limit = parseLimit(query.limit);
+    const where = { workspaceId, webhookId };
+
+    const [rows, total] = await this.prisma.withWorkspaceScope(workspaceId, (tx) =>
+      Promise.all([
+        tx.webhookDelivery.findMany({
+          where,
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          ...pageArgs(limit, query.cursor),
+        }),
+        tx.webhookDelivery.count({ where }),
+      ]),
     );
-    return rows.map((row) => this.toDeliveryDto(row));
+
+    const page = toPage(rows, limit, total);
+    return { items: page.items.map((row) => this.toDeliveryDto(row)), meta: page.meta };
   }
 
   async sendTest(ctx: RequestContext, workspaceId: string, webhookId: string) {

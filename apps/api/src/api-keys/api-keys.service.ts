@@ -14,6 +14,7 @@ import { Prisma } from '@prisma/client';
 import { AuditService } from '../audit/audit.service';
 import { AppError, conflict, invalid, notFound, unprocessable } from '../common/errors';
 import { MailService } from '../common/mail.service';
+import { pageArgs, parseLimit, toPage, type PageQuery } from '../common/pagination';
 import { PrismaService } from '../common/prisma.service';
 import { RequestContext } from '../common/request-context';
 import { JOB_NAMES } from '../jobs/job-names';
@@ -511,19 +512,34 @@ export class ApiKeysService implements OnModuleInit {
     };
   }
 
-  async listRequestLogs(workspaceId: string, keyId: string) {
-    const logs = await this.prisma.withWorkspaceScope(workspaceId, async (tx) => {
+  /**
+   * Recent requests made with one key.
+   *
+   * Paginated rather than capped: "which call failed, and when" is the question
+   * this endpoint exists to answer, and a hard 50 makes it unanswerable for any
+   * key doing real traffic — the interesting request is rarely in the newest
+   * fifty.
+   */
+  async listRequestLogs(workspaceId: string, keyId: string, query: PageQuery = {}) {
+    const limit = parseLimit(query.limit);
+    const where = { workspaceId, apiKeyId: keyId };
+
+    const [rows, total] = await this.prisma.withWorkspaceScope(workspaceId, async (tx) => {
       const key = await tx.apiKey.findFirst({ where: { id: keyId, workspaceId } });
       if (!key) throw notFound('API key', keyId);
 
-      return tx.apiRequestLog.findMany({
-        where: { workspaceId, apiKeyId: keyId },
-        orderBy: { occurredAt: 'desc' },
-        take: 50,
-      });
+      return Promise.all([
+        tx.apiRequestLog.findMany({
+          where,
+          orderBy: [{ occurredAt: 'desc' }, { id: 'desc' }],
+          ...pageArgs(limit, query.cursor),
+        }),
+        tx.apiRequestLog.count({ where }),
+      ]);
     });
 
-    return logs.map((log) => this.toRequestLogDto(log));
+    const page = toPage(rows, limit, total);
+    return { items: page.items.map((log) => this.toRequestLogDto(log)), meta: page.meta };
   }
 
   async requestLogSummary(
