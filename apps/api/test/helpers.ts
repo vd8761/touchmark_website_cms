@@ -51,7 +51,10 @@ const TEST_PASSWORD = 'a-sufficiently-long-test-password';
  * auth-registration.e2e-spec.ts; everything else needs a user, not a signup.
  */
 export async function registerUser(app: INestApplication, label = 'user'): Promise<TestUser> {
-  const email = `${label}-${Date.now()}-${counter++}@example.test`;
+  // The `e2e.` marker is what global teardown matches on. It must stay distinct
+  // from the seed, which also uses example.test — deleting owner@example.test
+  // because a test run finished would be a nasty surprise on a dev database.
+  const email = `${label}-${Date.now()}-${counter++}@e2e.example.test`;
   const prisma = app.get(PrismaService);
   const passwordHash = await app.get(PasswordService).hash(TEST_PASSWORD);
 
