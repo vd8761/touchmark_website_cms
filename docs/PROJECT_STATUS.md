@@ -1117,12 +1117,28 @@ oldest-due-job gauge is the one to page on.
 dashboard and alert rules built on the metrics above, per-workspace metrics (a support
 requirement), and SLOs with error budgets.
 
-### 11.8 Operational readiness · Medium · Spec §18.3
+### 11.8 Operational readiness · Development safety net built · Spec §18.3
 
-Needed: streaming replication, PITR, automated backups (daily/30 days, monthly/12 months) with
-**quarterly restore tests** — the spec notes an untested backup is not a backup. Also: feature
-flags with per-workspace targeting, and runbooks for ESP outage, queue backlog, tenant data-leak
-suspicion, key compromise, mass unsubscribe, and database failover.
+**Built:** `scripts/backup.ts` — `npm run db:backup` / `db:restore`, custom-format snapshots under
+`.backups/`, last 20 kept. Not a production strategy; it is the safety net for the operations that
+actually destroy data during development: `db:reset`, the e2e teardown, a purge with the windows
+set too short, and any hand-written query that matches more rows than intended.
+
+Two details that decide whether it works at all. It dumps as `DATABASE_ADMIN_URL`, never the
+application role — `cms_app` is not the table owner and carries `NOBYPASSRLS`, so a dump taken as
+that role contains only the rows RLS lets it see, which is nearly none, and would restore as an
+empty database while looking like a real backup. And it runs the client inside the Postgres
+container when no local `pg_dump` exists, so the client version always matches the server.
+
+**The restore has been exercised, not assumed.** Snapshot, create a canary site, restore, confirm
+the canary is gone and everything older is intact. §18.3's own point is that an untested backup is
+not a backup. Re-apply RLS after any restore — `pg_restore --clean` drops the policies with the
+objects they attach to.
+
+**Still needed for production:** streaming replication, PITR, automated off-host backups
+(daily/30 days, monthly/12 months) with scheduled restore drills, feature flags with per-workspace
+targeting, and runbooks for ESP outage, queue backlog, tenant data-leak suspicion, key compromise,
+mass unsubscribe and database failover.
 
 ### 11.9 Browser test coverage · Medium
 

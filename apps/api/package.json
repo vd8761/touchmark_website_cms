@@ -18,7 +18,9 @@
     "db:rls": "dotenv -e ../../.env -- ts-node scripts/apply-rls.ts",
     "db:seed": "dotenv -e ../../.env -- ts-node prisma/seed.ts",
     "admin:create": "dotenv -e ../../.env -- ts-node scripts/create-admin.ts",
-    "openapi": "dotenv -e ../../.env -- ts-node scripts/emit-openapi.ts"
+    "openapi": "dotenv -e ../../.env -- ts-node scripts/emit-openapi.ts",
+    "db:backup": "dotenv -e ../../.env -- ts-node scripts/backup.ts",
+    "db:restore": "dotenv -e ../../.env -- ts-node -e \"process.env.BACKUP_MODE='restore';require('./scripts/backup.ts')\""
   },
   "prisma": {
     "seed": "ts-node prisma/seed.ts"

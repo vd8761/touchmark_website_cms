@@ -13,3 +13,4 @@ apps/api/openapi-*.json
 apps/admin/dist/
 .media/
 apps/api/.media/
+.backups/
