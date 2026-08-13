@@ -50,6 +50,10 @@ import { EmailWebhookController } from './email/email-webhook.controller';
 import { SenderIdentityService } from './email/sender-identity.service';
 import { EventsService } from './events/events.service';
 import { JobQueueService } from './jobs/job-queue.service';
+import { PurgeService } from './jobs/purge.service';
+import { HttpObservabilityInterceptor } from './observability/http-observability.interceptor';
+import { MetricsController } from './observability/metrics.controller';
+import { MetricsService } from './observability/metrics.service';
 import {
   InvitationsController,
   OrganisationsController,
@@ -77,6 +81,7 @@ import { WebhooksService } from './webhooks/webhooks.service';
   ],
   controllers: [
     HealthController,
+    MetricsController,
     DeliveryController,
     DeliveryContentController,
     DeliveryAudienceController,
@@ -130,6 +135,9 @@ import { WebhooksService } from './webhooks/webhooks.service';
     MenusService,
     StorageService,
     MediaService,
+    // Registered after StorageService and MediaService: the purge job deletes
+    // stored objects before the rows that point at them.
+    PurgeService,
 
     // Order matters. RequestContextGuard resolves who is asking and what they
     // may do (§3.4 layer 1); PermissionsGuard then enforces it (layer 2). Both
@@ -138,6 +146,11 @@ import { WebhooksService } from './webhooks/webhooks.service';
     { provide: APP_GUARD, useClass: RequestContextGuard },
     { provide: APP_GUARD, useClass: PermissionsGuard },
 
+    MetricsService,
+
+    // Registered before the envelope so the measured duration covers response
+    // serialisation too — the part a client actually waits for.
+    { provide: APP_INTERCEPTOR, useClass: HttpObservabilityInterceptor },
     { provide: APP_INTERCEPTOR, useClass: EnvelopeInterceptor },
     { provide: APP_FILTER, useClass: ApiExceptionFilter },
   ],

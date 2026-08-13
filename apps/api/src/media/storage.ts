@@ -1,13 +1,21 @@
 import { createHmac, randomBytes } from 'node:crypto';
 import { createReadStream, createWriteStream } from 'node:fs';
-import { mkdir, rm, stat } from 'node:fs/promises';
+import { mkdir, readdir, rm, stat } from 'node:fs/promises';
 import { dirname, join, normalize, resolve, sep } from 'node:path';
 import type { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import {
+  DeleteObjectCommand,
+  DeleteObjectsCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
+  ListObjectsV2Command,
+  PutObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 /**
@@ -44,6 +52,14 @@ export interface StorageDriver {
   head(key: string): Promise<StoredObject | null>;
   publicUrl(key: string): Promise<string>;
   delete(key: string): Promise<void>;
+  /**
+   * Removes every object under a key prefix. Used by the purge job when a site's
+   * 30-day window expires (§6.3) — deleting the rows without this would leave
+   * the objects paid for and orphaned, with nothing left pointing at them.
+   *
+   * Returns the number of objects removed.
+   */
+  deletePrefix(prefix: string): Promise<number>;
   read(key: string): Promise<Readable>;
 }
 
@@ -84,6 +100,11 @@ export class StorageService implements OnModuleInit, StorageDriver {
    * listing is then partitioned by tenant, and a lifecycle rule or a purge can
    * target one workspace's objects by prefix when a site is deleted (§6.3).
    */
+  /** The prefix holding every object owned by one site. */
+  static workspacePrefix(workspaceId: string): string {
+    return `ws/${workspaceId}/`;
+  }
+
   static keyFor(workspaceId: string, assetId: string, filename: string): string {
     const safe = filename
       .replace(/[^\w.\- ]+/g, '_')
@@ -106,6 +127,10 @@ export class StorageService implements OnModuleInit, StorageDriver {
 
   delete(key: string): Promise<void> {
     return this.driver.delete(key);
+  }
+
+  deletePrefix(prefix: string): Promise<number> {
+    return this.driver.deletePrefix(prefix);
   }
 
   read(key: string): Promise<Readable> {
@@ -185,6 +210,46 @@ class S3Driver implements StorageDriver {
     await this.client.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
   }
 
+  /**
+   * Lists and deletes in pages of 1000 — the limit both `ListObjectsV2` and
+   * `DeleteObjects` impose. A site with more objects than that is normal, so
+   * the loop is the point, not an edge case.
+   */
+  async deletePrefix(prefix: string): Promise<number> {
+    let deleted = 0;
+    let continuationToken: string | undefined;
+
+    do {
+      const listed = await this.client.send(
+        new ListObjectsV2Command({
+          Bucket: this.bucket,
+          Prefix: prefix,
+          ContinuationToken: continuationToken,
+        }),
+      );
+
+      const keys = (listed.Contents ?? [])
+        .map((object) => object.Key)
+        .filter((key): key is string => Boolean(key));
+
+      if (keys.length > 0) {
+        await this.client.send(
+          new DeleteObjectsCommand({
+            Bucket: this.bucket,
+            Delete: { Objects: keys.map((Key) => ({ Key })), Quiet: true },
+          }),
+        );
+        deleted += keys.length;
+      }
+
+      // Deleting as we go invalidates nothing: the token refers to the listing
+      // position, and re-listing a prefix we have emptied simply returns less.
+      continuationToken = listed.IsTruncated ? listed.NextContinuationToken : undefined;
+    } while (continuationToken);
+
+    return deleted;
+  }
+
   async read(key: string): Promise<Readable> {
     const result = await this.client.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
     return result.Body as Readable;
@@ -262,6 +327,24 @@ class LocalDiskDriver implements StorageDriver {
 
   async delete(key: string): Promise<void> {
     await rm(this.pathFor(key), { force: true });
+  }
+
+  async deletePrefix(prefix: string): Promise<number> {
+    // pathFor is still the traversal guard here: a prefix that escaped the root
+    // would turn this into a recursive delete of arbitrary directories.
+    const path = this.pathFor(prefix);
+
+    let count = 0;
+    try {
+      const entries = await readdir(path, { recursive: true, withFileTypes: true });
+      count = entries.filter((entry) => entry.isFile()).length;
+    } catch {
+      // Nothing was ever written under this prefix — the same no-op S3 gives.
+      return 0;
+    }
+
+    await rm(path, { recursive: true, force: true });
+    return count;
   }
 
   async read(key: string): Promise<Readable> {
