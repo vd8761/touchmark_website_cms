@@ -81,6 +81,9 @@ const NAV: { section: string; items: NavItem[] }[] = [
       { label: 'API keys', to: 'api-keys', permission: 'apikey.manage', ready: true, icon: 'key' },
       { label: 'Webhooks', to: 'webhooks', permission: 'webhook.manage', ready: true, icon: 'webhook' },
       { label: 'Request logs', to: 'logs', permission: 'apilog.view', ready: true, icon: 'logs' },
+      // Ungated on purpose. It is documentation, and the person wiring the site
+      // up is not always the person holding apikey.manage.
+      { label: 'Developer guide', to: 'guides', ready: true, icon: 'book' },
     ],
   },
   {
@@ -107,6 +110,32 @@ const NAV: { section: string; items: NavItem[] }[] = [
     ],
   },
 ];
+
+/** Every destination in the sidebar, flattened once for the check below. */
+const NAV_PATHS = NAV.flatMap((group) => group.items.map((item) => item.to));
+
+/**
+ * Whether a nav item should match its URL exactly.
+ *
+ * `NavLink` matches by path *prefix* unless told otherwise, and this sidebar
+ * nests destinations under one another: "Site settings" is `settings`, while
+ * "Content model", "Site members", "Sending" and "Audit log" all live beneath
+ * it. Prefix matching therefore lit up "Site settings" on every one of those
+ * pages, and `settings/org/email` lit up three rows at once — so the sidebar
+ * stopped answering the one question it exists to answer.
+ *
+ * Computed rather than hardcoded: an item needs an exact match precisely when
+ * some *other* item sits underneath it. Adding a new `settings/…` page in
+ * future fixes itself, instead of silently reintroducing the bug.
+ *
+ * Items with no nav children keep prefix matching on purpose — that is what
+ * keeps "Blog posts" highlighted while you are inside the entry editor at
+ * `content/blog/:entryId`.
+ */
+function needsExactMatch(to: string): boolean {
+  if (to === '') return true;
+  return NAV_PATHS.some((other) => other !== to && other.startsWith(`${to}/`));
+}
 
 /**
  * Icons, inline rather than from a library.
@@ -137,6 +166,7 @@ const ICONS = {
     'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Zm8.4-3a8.4 8.4 0 0 0-.1-1.3l2-1.5-2-3.4-2.3 1a8.4 8.4 0 0 0-2.2-1.3L15.4 3h-4l-.4 2.5a8.4 8.4 0 0 0-2.2 1.3l-2.3-1-2 3.4 2 1.5a8.4 8.4 0 0 0 0 2.6l-2 1.5 2 3.4 2.3-1a8.4 8.4 0 0 0 2.2 1.3l.4 2.5h4l.4-2.5a8.4 8.4 0 0 0 2.2-1.3l2.3 1 2-3.4-2-1.5c.06-.43.1-.86.1-1.3Z',
   building: 'M3 21h18M5 21V4a1 1 0 0 1 1-1h8a1 1 0 0 1 1 1v17M15 9h3a1 1 0 0 1 1 1v11M9 7h2M9 11h2M9 15h2',
   mail: 'M3 5h18v14H3V5Zm0 1 9 7 9-7',
+  book: 'M4 4h7a2 2 0 0 1 2 2v14a1.5 1.5 0 0 0-1.5-1.5H4V4Zm16 0h-7a2 2 0 0 0-2 2v14a1.5 1.5 0 0 1 1.5-1.5H20V4Z',
 } as const;
 
 type IconName = keyof typeof ICONS;
@@ -303,7 +333,7 @@ export function AppShell() {
                     <li key={item.to}>
                       <NavLink
                         to={item.to ? `${base}/${item.to}` : base}
-                        end={item.to === ''}
+                        end={needsExactMatch(item.to)}
                         onClick={() => setMobileOpen(false)}
                         title={collapsed ? item.label : undefined}
                         className={({ isActive }) =>

@@ -8,6 +8,7 @@ import { AuditLog } from './pages/AuditLog';
 import { ContentList } from './pages/ContentList';
 import { ContentTypes } from './pages/ContentTypes';
 import { Dashboard } from './pages/Dashboard';
+import { DeveloperGuide } from './pages/DeveloperGuide';
 import { EmailConfigurations } from './pages/EmailConfigurations';
 import { EntryEditor } from './pages/EntryEditor';
 import { MediaLibrary } from './pages/MediaLibrary';
@@ -73,6 +74,7 @@ function SiteRoutes() {
           <Route path="api-keys" element={<ApiKeys />} />
           <Route path="webhooks" element={<Webhooks />} />
           <Route path="logs" element={<ApiLogs />} />
+          <Route path="guides" element={<DeveloperGuide />} />
           <Route path="settings/content-types" element={<ContentTypes />} />
           <Route path="settings" element={<SiteSettings />} />
           <Route path="settings/members" element={<Members />} />
