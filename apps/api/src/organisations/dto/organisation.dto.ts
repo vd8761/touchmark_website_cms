@@ -32,6 +32,17 @@ export class CreateOrganisationDto {
   @Matches(SLUG_PATTERN, { message: 'Use lowercase letters, numbers and hyphens only.' })
   @MaxLength(60)
   slug?: string;
+
+  @ApiPropertyOptional({
+    example: 'https://cdn.acme.com/logo.png',
+    description:
+      'Organisation logo used for CMS branding. May be an absolute URL or an inline ' +
+      'data: URL (e.g. a small PNG uploaded during onboarding).',
+  })
+  @IsOptional()
+  @IsString()
+  @MaxLength(2_000_000)
+  logo_url?: string;
 }
 
 export class UpdateOrganisationDto {

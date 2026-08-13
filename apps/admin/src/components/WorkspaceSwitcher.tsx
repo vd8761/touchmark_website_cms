@@ -119,11 +119,20 @@ export function WorkspaceSwitcher() {
         aria-haspopup="dialog"
         className="flex w-full items-center gap-2.5 rounded-lg px-2 py-1.5 text-left hover:bg-surface-subtle"
       >
-        <span
-          aria-hidden
-          className="h-8 w-8 shrink-0 rounded-lg"
-          style={{ backgroundColor: currentWorkspace?.colour ?? '#4F46E5' }}
-        />
+        {currentOrg?.logo_url ? (
+          <img
+            src={currentOrg.logo_url}
+            alt=""
+            aria-hidden
+            className="h-8 w-8 shrink-0 rounded-lg object-contain"
+          />
+        ) : (
+          <span
+            aria-hidden
+            className="h-8 w-8 shrink-0 rounded-lg"
+            style={{ backgroundColor: currentWorkspace?.colour ?? '#4F46E5' }}
+          />
+        )}
         <span className="min-w-0 flex-1">
           <span className="block truncate text-xs text-text-secondary">
             {currentOrg?.name ?? '—'}

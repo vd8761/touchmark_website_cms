@@ -41,7 +41,10 @@ export class OrganisationsService {
    * be decorative. After bootstrap, people arrive in an organisation by
    * invitation.
    */
-  async create(ctx: RequestContext, input: { name: string; slug?: string }): Promise<OrganisationDto> {
+  async create(
+    ctx: RequestContext,
+    input: { name: string; slug?: string; logo_url?: string },
+  ): Promise<OrganisationDto> {
     await this.admins.assertMayBootstrapOrAdminister(
       { userId: ctx.userId },
       {
@@ -58,7 +61,12 @@ export class OrganisationsService {
 
     const org = await this.prisma.asSystem(async (tx) => {
       const created = await tx.organisation.create({
-        data: { id: newId(), name: input.name.trim(), slug },
+        data: {
+          id: newId(),
+          name: input.name.trim(),
+          slug,
+          logoUrl: input.logo_url ?? undefined,
+        },
       });
 
       // The creator is the first Owner. §3.1: "At least one always exists."

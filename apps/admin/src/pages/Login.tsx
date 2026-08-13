@@ -94,12 +94,9 @@ export function Login() {
           </Button>
         </form>
 
-        <div className="mt-4 flex justify-between text-sm">
+        <div className="mt-4 text-sm">
           <Link to="/forgot-password" className="text-text-secondary hover:text-text">
             Forgot password?
-          </Link>
-          <Link to="/register" className="text-accent hover:underline">
-            Create an account
           </Link>
         </div>
       </Card>

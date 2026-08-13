@@ -178,6 +178,9 @@ export function AppShell() {
   const [collapsed, setCollapsed] = useState(
     () => localStorage.getItem('cms.sidebar-collapsed') === 'true',
   );
+  // On narrow screens the sidebar is a slide-over drawer rather than a fixed
+  // rail; this tracks whether it is open. It has no effect from `md` up.
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   // `[` collapses the sidebar to an icon rail; the state is per user (§17.2).
   useEffect(() => {
@@ -208,21 +211,56 @@ export function AppShell() {
 
   return (
     <div className="flex h-full">
+      {/* Backdrop behind the mobile drawer; absent from `md` up. */}
+      {mobileOpen && (
+        <div
+          aria-hidden
+          onClick={() => setMobileOpen(false)}
+          className="fixed inset-0 z-30 bg-black/40 md:hidden"
+        />
+      )}
+
       <aside
         className={cx(
-          'flex shrink-0 flex-col border-r border-border bg-surface transition-all',
-          collapsed ? 'w-16' : 'w-60',
+          'fixed inset-y-0 left-0 z-40 flex w-60 flex-col border-r border-border bg-surface transition-all',
+          'md:static md:z-auto md:shrink-0 md:translate-x-0',
+          mobileOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0',
+          collapsed ? 'md:w-16' : 'md:w-60',
         )}
       >
-        <div className="border-b border-border p-2">
+        <div className="flex items-center gap-1 border-b border-border p-2">
           {collapsed ? (
-            <div
-              aria-hidden
-              className="mx-auto h-8 w-8 rounded-lg"
-              style={{ backgroundColor: currentWorkspace?.colour ?? '#4F46E5' }}
-            />
+            currentOrg?.logo_url ? (
+              <img
+                src={currentOrg.logo_url}
+                alt=""
+                aria-hidden
+                className="mx-auto h-8 w-8 rounded-lg object-contain"
+              />
+            ) : (
+              <div
+                aria-hidden
+                className="mx-auto h-8 w-8 rounded-lg"
+                style={{ backgroundColor: currentWorkspace?.colour ?? '#4F46E5' }}
+              />
+            )
           ) : (
-            <WorkspaceSwitcher />
+            <div className="min-w-0 flex-1">
+              <WorkspaceSwitcher />
+            </div>
+          )}
+          {/* Close the drawer from within it on mobile. */}
+          {!collapsed && (
+            <button
+              type="button"
+              onClick={() => setMobileOpen(false)}
+              className="shrink-0 rounded-lg p-2 text-text-secondary hover:bg-surface-subtle md:hidden"
+              aria-label="Close menu"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} className="h-5 w-5">
+                <path d="M6 6l12 12M18 6L6 18" strokeLinecap="round" />
+              </svg>
+            </button>
           )}
         </div>
 
@@ -266,6 +304,7 @@ export function AppShell() {
                       <NavLink
                         to={item.to ? `${base}/${item.to}` : base}
                         end={item.to === ''}
+                        onClick={() => setMobileOpen(false)}
                         title={collapsed ? item.label : undefined}
                         className={({ isActive }) =>
                           cx(
@@ -310,7 +349,18 @@ export function AppShell() {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-14 shrink-0 items-center justify-between gap-4 border-b border-border bg-surface px-4">
-          <div className="text-sm text-text-secondary">
+          <div className="flex min-w-0 items-center gap-2 text-sm text-text-secondary">
+            {/* Opens the navigation drawer on mobile; hidden from `md` up. */}
+            <button
+              type="button"
+              onClick={() => setMobileOpen(true)}
+              className="-ml-1 rounded-lg p-2 text-text-secondary hover:bg-surface-subtle md:hidden"
+              aria-label="Open menu"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.6} className="h-5 w-5">
+                <path d="M4 6h16M4 12h16M4 18h16" strokeLinecap="round" />
+              </svg>
+            </button>
             {currentWorkspace?.status === 'archived' && (
               <span className="rounded-full bg-warning/10 px-2.5 py-1 text-xs font-medium text-warning">
                 This site is archived and read-only
@@ -324,7 +374,7 @@ export function AppShell() {
               className="rounded-lg px-2.5 py-1.5 text-sm text-text-secondary hover:bg-surface-subtle"
               title="Command palette (⌘K) — arrives with the content module"
             >
-              Search ⌘K
+              Search <span className="hidden sm:inline">⌘K</span>
             </button>
             <button
               type="button"
@@ -336,7 +386,7 @@ export function AppShell() {
           </div>
         </header>
 
-        <main className="min-h-0 flex-1 overflow-y-auto p-6">
+        <main className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
           <Outlet />
         </main>
       </div>
