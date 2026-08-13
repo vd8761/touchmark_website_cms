@@ -377,6 +377,25 @@ export class EntriesController {
     return { data, meta: { total: data.length } };
   }
 
+  @Get('entries/:entryId/versions/:version')
+  @RequirePermission('content.view')
+  @ApiOperation({
+    summary: 'One version, with its content',
+    description:
+      'The stored values for a single version — what the comparison view diffs against. The list ' +
+      'endpoint deliberately omits `data`, since sending it for a hundred versions would be ' +
+      'megabytes to render a column of timestamps.',
+  })
+  async version(
+    @Param('workspaceId') workspaceId: string,
+    @Param('entryId') entryId: string,
+    @Param('version') version: string,
+  ) {
+    return {
+      data: await this.entries.getVersion(workspaceId, entryId, Number(version)),
+    };
+  }
+
   @Post('entries/:entryId/versions/restore')
   @HttpCode(200)
   @RequirePermission('content.view')
