@@ -624,3 +624,183 @@ describe('Delivery content API', () => {
       });
   });
 });
+
+describe('Delivery relation expansion', () => {
+  let authorType: { id: string; api_id: string };
+  let author: { id: string; slug: string };
+  let asset: { id: string };
+  let post: { id: string; slug: string };
+
+  beforeAll(async () => {
+    authorType = await api()
+      .post(`/admin/v1/workspaces/${ws}/content-types`)
+      .set('Cookie', cookies)
+      .send({ name: `Author ${Date.now()}`, kind: 'collection' })
+      .expect(201)
+      .then((response) => response.body.data);
+
+    await api()
+      .post(`/admin/v1/workspaces/${ws}/content-types/${authorType.id}/fields`)
+      .set('Cookie', cookies)
+      .send({ name: 'Title', type: 'text', required: true })
+      .expect(201);
+
+    author = await api()
+      .post(`/admin/v1/workspaces/${ws}/content/${authorType.id}`)
+      .set('Cookie', cookies)
+      .send({ data: { title: 'Ada Lovelace' } })
+      .expect(201)
+      .then((response) => response.body.data);
+
+    await api()
+      .post(`/admin/v1/workspaces/${ws}/content/entries/${author.id}/publish`)
+      .set('Cookie', cookies)
+      .send({})
+      .expect(200);
+
+    for (const field of [
+      { name: 'Author', type: 'relation_one', config: { relationTypeApiId: authorType.api_id } },
+      { name: 'Hero', type: 'media' },
+      { name: 'Reviewers', type: 'relation_many', config: { relationTypeApiId: authorType.api_id } },
+    ]) {
+      await api()
+        .post(`/admin/v1/workspaces/${ws}/content-types/${tenant.contentType.id}/fields`)
+        .set('Cookie', cookies)
+        .send(field)
+        .expect(201);
+    }
+
+    asset = await uploadMedia(PNG, 'hero.png', 'image/png');
+
+    post = await api()
+      .post(`/admin/v1/workspaces/${ws}/content/${tenant.contentType.id}`)
+      .set('Cookie', cookies)
+      .send({
+        data: {
+          title: 'Expanded post',
+          author: author.id,
+          hero: asset.id,
+          reviewers: [author.id],
+        },
+      })
+      .expect(201)
+      .then((response) => response.body.data);
+
+    await api()
+      .post(`/admin/v1/workspaces/${ws}/content/entries/${post.id}/publish`)
+      .set('Cookie', cookies)
+      .send({})
+      .expect(200);
+  }, 60_000);
+
+  it('leaves references as ids when expand is absent', async () => {
+    const key = await createDeliveryKey();
+
+    const response = await api()
+      .get(`/v1/content/${tenant.contentType.api_id}/${post.slug}`)
+      .set('Authorization', `Bearer ${key.key}`)
+      .expect(200);
+
+    expect(response.body.data.data.author).toBe(author.id);
+    expect(response.body.data.data.hero).toBe(asset.id);
+  });
+
+  it('resolves relation and media references inline', async () => {
+    const key = await createDeliveryKey(['content.read', 'media.read']);
+
+    const response = await api()
+      .get(`/v1/content/${tenant.contentType.api_id}/${post.slug}`)
+      .query({ expand: 'data.author,data.hero,reviewers' })
+      .set('Authorization', `Bearer ${key.key}`)
+      .expect(200);
+
+    const data = response.body.data.data;
+    expect(data.author).toMatchObject({
+      id: author.id,
+      type: authorType.api_id,
+      slug: author.slug,
+    });
+    expect(data.author.data.title).toBe('Ada Lovelace');
+    expect(data.hero).toMatchObject({ id: asset.id, mime_type: 'image/png' });
+    expect(typeof data.hero.url).toBe('string');
+    expect(data.reviewers).toHaveLength(1);
+    expect(data.reviewers[0].id).toBe(author.id);
+  });
+
+  it('expands every entry of a listing without a query per row', async () => {
+    const key = await createDeliveryKey();
+
+    const response = await api()
+      .get(`/v1/content/${tenant.contentType.api_id}`)
+      .query({ expand: 'data.author' })
+      .set('Authorization', `Bearer ${key.key}`)
+      .expect(200);
+
+    const expanded = response.body.data.find((entry: { id: string }) => entry.id === post.id);
+    expect(expanded.data.author.id).toBe(author.id);
+
+    // The fixture entry has no author, and an empty reference must stay empty
+    // rather than becoming a broken object.
+    const original = response.body.data.find((entry: { id: string }) => entry.id === tenant.entry.id);
+    expect(original.data.author).toBeNull();
+  });
+
+  it('never expands a reference to unpublished content', async () => {
+    const key = await createDeliveryKey();
+
+    await api()
+      .post(`/admin/v1/workspaces/${ws}/content/entries/${author.id}/unpublish`)
+      .set('Cookie', cookies)
+      .send({})
+      .expect(200);
+
+    const response = await api()
+      .get(`/v1/content/${tenant.contentType.api_id}/${post.slug}`)
+      .query({ expand: 'data.author,data.reviewers' })
+      .set('Authorization', `Bearer ${key.key}`)
+      .expect(200);
+
+    expect(response.body.data.data.author).toBeNull();
+    expect(response.body.data.data.reviewers).toEqual([]);
+
+    await api()
+      .post(`/admin/v1/workspaces/${ws}/content/entries/${author.id}/publish`)
+      .set('Cookie', cookies)
+      .send({})
+      .expect(200);
+  });
+
+  it('rejects expanding a field that holds no reference', async () => {
+    const key = await createDeliveryKey();
+
+    await api()
+      .get(`/v1/content/${tenant.contentType.api_id}/${post.slug}`)
+      .query({ expand: 'data.title' })
+      .set('Authorization', `Bearer ${key.key}`)
+      .expect(400)
+      .expect((response) => {
+        expect(response.body.error.code).toBe('invalid_request');
+      });
+
+    await api()
+      .get(`/v1/content/${tenant.contentType.api_id}/${post.slug}`)
+      .query({ expand: 'data.nonexistent' })
+      .set('Authorization', `Bearer ${key.key}`)
+      .expect(400);
+  });
+
+  it('projects fields through an expanded reference', async () => {
+    const key = await createDeliveryKey();
+
+    const response = await api()
+      .get(`/v1/content/${tenant.contentType.api_id}/${post.slug}`)
+      .query({ expand: 'data.author', fields: 'id,data.author.slug' })
+      .set('Authorization', `Bearer ${key.key}`)
+      .expect(200);
+
+    expect(response.body.data).toEqual({
+      id: post.id,
+      data: { author: { slug: author.slug } },
+    });
+  });
+});

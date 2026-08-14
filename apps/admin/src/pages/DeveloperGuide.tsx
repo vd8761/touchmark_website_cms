@@ -417,6 +417,10 @@ function Queries({ origin, sample }: { origin: string; sample?: ContentTypeDto }
           ['?filter[data.featured]=true', 'Filter on your own fields, or on status and dates.'],
           ['?filter[published_at][gte]=…', 'Range operators on dates.'],
           ['?fields=id,slug,data.title', 'Return only what you need.'],
+          [
+            '?expand=data.author,data.hero',
+            'Resolve relation and media fields inline instead of ids. One level deep; a reference to unpublished or deleted content comes back null.',
+          ],
           ['?locale=fr', 'A specific locale, with this site’s fallback behaviour applied.'],
         ]}
       />

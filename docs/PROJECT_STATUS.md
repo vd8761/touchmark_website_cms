@@ -148,7 +148,7 @@ test** — so adding an endpoint without a test breaks the build.
 
 | Metric | Value |
 |---|---|
-| Tests passing | **322** (287 API — 89 unit, 198 e2e — 23 portal, and 12 shared) |
+| Tests passing | **328** (293 API — 89 unit, 204 e2e — 23 portal, and 12 shared) |
 | Registered routes | 132 total — 76 workspace-scoped, 17 org-scoped |
 | Isolation coverage | 76 of 76 workspace-scoped routes |
 | RLS coverage | 27 of 27 tables carrying `workspace_id` |
@@ -161,10 +161,17 @@ Both apps typecheck and build clean. The full flow has been exercised against a 
 instance and the **live Resend API**. Lint now runs: ESLint 9 flat config at the repo root, extended
 per workspace, wired into CI ahead of the typecheck, and passing with zero errors in both apps.
 
-Two CI facts worth knowing. The `security` job (`npm audit --audit-level=high`) is **failing**, on
-31 advisories including one critical — all of them devDependencies reached through `@nestjs/cli`
-(`webpack`) and `inquirer` (`tmp`), and clearing them needs a breaking bump to `@nestjs/cli@11`.
-And the isolation merge blocker was **red on `main`**: `POST /workspaces/:workspaceId/transfer-
+The `security` job (`npm audit --audit-level=high`) is **green, with zero advisories at any
+level**. It had been failing on 32, one critical. The old framing — "all devDependencies through
+`@nestjs/cli`" — had stopped being true: `nodemailer`, `vitest` and `@nestjs/core` itself were
+direct and vulnerable. Clearing them meant the NestJS 10 → 11 move, and with it Express 5, whose
+router no longer accepts a bare `*`; the wildcard routes are named (`{*splat}`) and a matched
+wildcard now arrives as an array of segments rather than `params['0']`. `js-yaml` is pinned
+exactly by `@nestjs/swagger`, so it needs a scoped `overrides` entry to reach a fixed release —
+worth remembering the next time an advisory looks unfixable without a downgrade.
+
+One more CI fact worth knowing. The isolation merge blocker was **red on `main`**: `POST
+/workspaces/:workspaceId/transfer-
 ownership` shipped in commit 788d07a without an isolation test, which is exactly the case the
 coverage guard exists to catch. The test is now in place and the suite is green.
 
@@ -262,6 +269,8 @@ The shared job layer defines the twelve spec job names. Three have processors �
 - `GET /v1/me`, authenticated by any valid API key, echoing workspace, scopes and limits
 - Delivery reads for content type schemas, published entries by list/slug/id, related entries,
   search, taxonomies/terms, resolved menus and completed media assets
+- The §14.1 query contract on content reads: cursor pagination, sorting, filtering, field
+  selection, locale fallback, and `?expand=` relation/media expansion
 - Subscriber/list/form Delivery endpoints, short-lived preview tokens, outbound webhooks with
   encrypted signing secrets and replayable delivery records
 - Separate generated `openapi-admin.json` and `openapi-delivery.json`
@@ -455,7 +464,7 @@ producing far more history than a person clicking Save ever did, so "which of th
 want" became a question the UI could not answer.
 
 - Word-level diff via a hand-written LCS. One classic algorithm over short strings is cheaper than
-  another dependency in a tree that already fails `npm audit`, and it is the piece most worth being
+  another dependency in the tree, and it is the piece most worth being
   able to read when a diff looks wrong.
 - **Whitespace inside an edit is absorbed into it.** Changing "b c" to "x y" leaves the space
   between technically unchanged, so a naive walk renders two highlight boxes with a gap punched
@@ -553,7 +562,14 @@ slug at delivery time, so renaming a slug never breaks a menu (§7.6).
 published-entry-by-slug/id, related entries, search, taxonomies/terms, resolved menus,
 completed-media reads, subscriber/list/form endpoints and preview-token reads are built.
 Cursor pagination, sorting, filtering, field selection and locale fallback are implemented for
-content reads. Still needed: relation expansion (`expand=`), and richer rich-text rendering options.
+content reads, as is relation expansion — `?expand=data.author,data.hero_image` resolves
+`relation_one`, `relation_many`, `media` and `media_list` fields inline, one level deep, in two
+queries per page however many rows it holds. Expanded targets pass through the same published
+filter as any other Delivery read, so a relation pointing at a draft comes back `null` rather than
+leaking unpublished content; an id that no longer resolves is `null` for a single reference and
+absent from a list, because one deleted target should not fail the whole page. Expanding a field
+that holds no reference is a `400` naming the field, not a silent no-op. Still needed: richer
+rich-text rendering options (`?format=html`, §4.1).
 Search is now Postgres FTS (§11.4).
 
 ### 5.3 Key authentication pipeline · Medium · Spec §12.2

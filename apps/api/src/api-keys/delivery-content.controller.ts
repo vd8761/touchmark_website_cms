@@ -43,6 +43,7 @@ export class DeliveryContentController {
   @Get('content/id/:id')
   @RequireApiScope('content.read')
   @ApiParam({ name: 'id', description: 'Entry ID.' })
+  @ApiQuery({ name: 'expand', required: false, description: 'Comma-separated relation or media fields to resolve inline, e.g. `data.author,data.hero_image`. One level deep.' })
   @ApiOperation({ summary: 'Fetch a published entry by ID' })
   async getEntryById(
     @Req() req: Request,
@@ -83,6 +84,7 @@ export class DeliveryContentController {
   @ApiQuery({ name: 'limit', required: false, description: 'Default 25, maximum 100.' })
   @ApiQuery({ name: 'cursor', required: false })
   @ApiQuery({ name: 'sort', required: false, description: 'e.g. `-published_at,slug`.' })
+  @ApiQuery({ name: 'expand', required: false, description: 'Comma-separated relation or media fields to resolve inline, e.g. `data.author,data.hero_image`. One level deep.' })
   @ApiOperation({ summary: 'List published entries for a content type' })
   async listEntries(
     @Req() req: Request,
@@ -102,6 +104,7 @@ export class DeliveryContentController {
   @ApiQuery({ name: 'limit', required: false, description: 'Default 10, maximum 50.' })
   @ApiQuery({ name: 'cursor', required: false })
   @ApiQuery({ name: 'sort', required: false, description: 'e.g. `-published_at,slug`.' })
+  @ApiQuery({ name: 'expand', required: false, description: 'Comma-separated relation or media fields to resolve inline, e.g. `data.author,data.hero_image`. One level deep.' })
   @ApiOperation({ summary: 'List published entries related by shared taxonomy terms' })
   async listRelatedEntries(
     @Req() req: Request,
@@ -124,6 +127,7 @@ export class DeliveryContentController {
   @ApiParam({ name: 'type', description: 'Content type API ID.' })
   @ApiParam({ name: 'slug' })
   @ApiQuery({ name: 'locale', required: false })
+  @ApiQuery({ name: 'expand', required: false, description: 'Comma-separated relation or media fields to resolve inline, e.g. `data.author,data.hero_image`. One level deep.' })
   @ApiOperation({ summary: 'Fetch a published entry by slug' })
   async getEntryBySlug(
     @Req() req: Request,
@@ -241,6 +245,7 @@ function parseEntryQuery(query: Record<string, unknown>): DeliveryEntryQuery {
     cursor: stringParam(query.cursor),
     sort: stringParam(query.sort),
     fields: stringParam(query.fields),
+    expand: stringParam(query.expand),
     localeFallback: stringParam(query.locale_fallback) !== 'false',
     filters: parseFilters(query),
   };
