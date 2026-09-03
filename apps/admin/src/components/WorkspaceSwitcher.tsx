@@ -31,6 +31,10 @@ export function WorkspaceSwitcher() {
 
   const selectedOrgId = activeOrgId ?? currentOrg?.id ?? organisations[0]?.id ?? null;
 
+  // `open` is not read here — it is the cache key. Recents live in
+  // localStorage and are written by other parts of the app, so the list has to
+  // be re-read each time the panel opens rather than once per mount.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   const recents = useMemo(() => readRecentSites(), [open]);
 
   const visibleSites = useMemo(() => {

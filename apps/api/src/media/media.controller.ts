@@ -290,14 +290,17 @@ export class LocalUploadController {
   }
 
   @Public()
-  @Get('*')
+  @Get('*splat')
   @ApiExcludeEndpoint()
   async serve(@Req() req: Request, @Res() res: Response) {
     const local = this.storage.local;
     if (!local) throw new AppError('resource_not_found', 'Not found.');
 
-    // Express 4 exposes a wildcard segment positionally, not by name.
-    const key = (req.params as Record<string, string>)['0'] ?? '';
+    // Express 5 (path-to-regexp v8) requires a *named* wildcard and hands back
+    // the matched segments as an array, so the object key is rejoined here.
+    // Express 4 exposed the same thing positionally as `params['0']`.
+    const splat = (req.params as Record<string, string | string[]>).splat;
+    const key = Array.isArray(splat) ? splat.join('/') : (splat ?? '');
     const stored = await local.head(key);
     if (!stored) throw new AppError('resource_not_found', 'File not found.');
 

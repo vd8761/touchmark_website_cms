@@ -65,9 +65,15 @@ export class DeliveryContentService {
 
     const page = rows.slice(0, limit);
     const hasMore = rows.length > limit;
+    const items = await this.expand(
+      key.workspaceId,
+      page.map((entry) => this.toEntryDto(entry, type)),
+      type.fields,
+      query.expand,
+    );
 
     return {
-      items: page.map((entry) => projectFields(this.toEntryDto(entry, type), query.fields)),
+      items: items.map((entry) => projectFields(entry, query.fields)),
       meta: {
         total,
         limit,
@@ -81,19 +87,25 @@ export class DeliveryContentService {
     key: ApiKeyAuthContext,
     typeApiId: string,
     slug: string,
-    query: { locale?: string; fields?: string; localeFallback?: boolean },
+    query: { locale?: string; fields?: string; expand?: string; localeFallback?: boolean },
   ) {
     const type = await this.requireType(key, typeApiId);
     const entry = await this.findEntryBySlugWithFallback(key.workspaceId, type.id, slug, query.locale, query.localeFallback);
 
     if (!entry) throw notFound('Entry', slug);
-    return projectFields(this.toEntryDto(entry, type), query.fields);
+    const [expanded] = await this.expand(
+      key.workspaceId,
+      [this.toEntryDto(entry, type)],
+      type.fields,
+      query.expand,
+    );
+    return projectFields(expanded, query.fields);
   }
 
   async getEntryById(
     key: ApiKeyAuthContext,
     id: string,
-    query: { locale?: string; fields?: string; localeFallback?: boolean } = {},
+    query: { locale?: string; fields?: string; expand?: string; localeFallback?: boolean } = {},
   ) {
     const entry = await this.prisma.withWorkspaceScope(key.workspaceId, (tx) =>
       tx.contentEntry.findFirst({
@@ -101,12 +113,18 @@ export class DeliveryContentService {
           id,
           ...(query.locale ? { locale: query.locale } : {}),
         }),
-        include: { contentType: true },
+        include: { contentType: { include: { fields: true } } },
       }),
     );
 
     if (!entry) throw notFound('Entry', id);
-    return projectFields(this.toEntryDto(entry, entry.contentType), query.fields);
+    const [expanded] = await this.expand(
+      key.workspaceId,
+      [this.toEntryDto(entry, entry.contentType)],
+      entry.contentType.fields,
+      query.expand,
+    );
+    return projectFields(expanded, query.fields);
   }
 
   async search(
@@ -219,9 +237,15 @@ export class DeliveryContentService {
 
     const page = rows.slice(0, limit);
     const hasMore = rows.length > limit;
+    const items = await this.expand(
+      key.workspaceId,
+      page.map((entry) => this.toEntryDto(entry, type)),
+      type.fields,
+      query.expand,
+    );
 
     return {
-      items: page.map((entry) => projectFields(this.toEntryDto(entry, type), query.fields)),
+      items: items.map((entry) => projectFields(entry, query.fields)),
       meta: {
         total,
         limit,
@@ -476,6 +500,132 @@ export class DeliveryContentService {
 
     if (!type) throw notFound('Content type', apiId);
     return type;
+  }
+
+  /**
+   * Replaces reference ids in `data` with the objects they point at (§14.1
+   * `?expand=`).
+   *
+   * A relation field stores an id, so rendering a post with its author's name
+   * costs a second request per entry — twenty for a listing page. Expansion
+   * resolves the whole page in two queries regardless of its size: one for
+   * entries, one for media assets.
+   *
+   * Three rules worth knowing:
+   *
+   * - **One level only.** An expanded entry keeps its own relations as ids.
+   *   Recursion here is how one request becomes an unbounded fan-out, and a
+   *   caller that needs the next level can ask for it.
+   * - **Targets go through the same published filter as any other read.** A
+   *   relation pointing at a draft resolves to `null`, never to unpublished
+   *   content — expansion must not become a way around the publish gate.
+   * - **An unresolvable reference is `null` for a single relation and simply
+   *   absent from a list.** The alternative is failing the whole request
+   *   because one entry references something that was deleted, which turns a
+   *   content mistake into an outage on the customer's site.
+   */
+  private async expand<T extends { data: unknown }>(
+    workspaceId: string,
+    entries: T[],
+    typeFields: Array<{ apiId: string; type: string }>,
+    expand?: string,
+  ): Promise<T[]> {
+    const requested = (expand ?? '')
+      .split(',')
+      .map((path) => path.trim())
+      .filter(Boolean)
+      // `data.` is how §14.1 writes these, and how `fields=` and `filter[]`
+      // already address the same values; the bare form is accepted too.
+      .map((path) => (path.startsWith('data.') ? path.slice('data.'.length) : path));
+
+    if (!requested.length || !entries.length) return entries;
+
+    const byApiId = new Map(typeFields.map((field) => [field.apiId, field.type]));
+    const targets: Array<{ apiId: string; kind: 'entry' | 'media'; many: boolean }> = [];
+
+    for (const apiId of unique(requested)) {
+      const type = byApiId.get(apiId);
+      if (!type) {
+        throw invalid(
+          `Cannot expand \`${apiId}\`: this content type has no such field.`,
+          'Expand a relation or media field, e.g. `expand=data.author`.',
+        );
+      }
+      if (type === 'relation_one') targets.push({ apiId, kind: 'entry', many: false });
+      else if (type === 'relation_many') targets.push({ apiId, kind: 'entry', many: true });
+      else if (type === 'media') targets.push({ apiId, kind: 'media', many: false });
+      else if (type === 'media_list') targets.push({ apiId, kind: 'media', many: true });
+      else {
+        throw invalid(
+          `Cannot expand \`${apiId}\`: it is a ${type} field, which holds no reference.`,
+          'Only relation and media fields can be expanded.',
+        );
+      }
+    }
+
+    const entryIds = new Set<string>();
+    const mediaIds = new Set<string>();
+    for (const entry of entries) {
+      const data = asRecord(entry.data);
+      if (!data) continue;
+      for (const target of targets) {
+        const sink = target.kind === 'entry' ? entryIds : mediaIds;
+        for (const id of referenceIds(data[target.apiId], target.many)) sink.add(id);
+      }
+    }
+
+    const [relatedEntries, relatedMedia] = await Promise.all([
+      this.resolveEntryTargets(workspaceId, [...entryIds]),
+      this.resolveMediaTargets(workspaceId, [...mediaIds]),
+    ]);
+
+    return entries.map((entry) => {
+      const data = asRecord(entry.data);
+      if (!data) return entry;
+
+      const next = { ...data };
+      for (const target of targets) {
+        const resolved = target.kind === 'entry' ? relatedEntries : relatedMedia;
+        const ids = referenceIds(data[target.apiId], target.many);
+        if (target.many) {
+          next[target.apiId] = ids.map((id) => resolved.get(id)).filter(isPresent);
+        } else {
+          next[target.apiId] = ids.length ? (resolved.get(ids[0]) ?? null) : null;
+        }
+      }
+      return { ...entry, data: next };
+    });
+  }
+
+  private async resolveEntryTargets(workspaceId: string, ids: string[]) {
+    if (!ids.length) return new Map<string, Record<string, unknown>>();
+
+    const rows = await this.prisma.withWorkspaceScope(workspaceId, (tx) =>
+      tx.contentEntry.findMany({
+        where: publishedEntryWhere(workspaceId, { id: { in: ids } }),
+        include: { contentType: true },
+      }),
+    );
+
+    return new Map(rows.map((row) => [row.id, this.toEntryDto(row, row.contentType)]));
+  }
+
+  private async resolveMediaTargets(workspaceId: string, ids: string[]) {
+    if (!ids.length) return new Map<string, Record<string, unknown>>();
+
+    const rows = await this.prisma.withWorkspaceScope(workspaceId, (tx) =>
+      tx.mediaAsset.findMany({
+        where: {
+          workspaceId,
+          id: { in: ids },
+          deletedAt: null,
+          uploadedAt: { not: null },
+        },
+      }),
+    );
+
+    const dtos = await Promise.all(rows.map((row) => this.toMediaDto(row)));
+    return new Map(rows.map((row, index) => [row.id, dtos[index]]));
   }
 
   private async requireTaxonomy(key: ApiKeyAuthContext, apiId: string) {
@@ -742,9 +892,24 @@ export type DeliveryEntryQuery = {
   cursor?: string;
   sort?: string;
   fields?: string;
+  expand?: string;
   filters?: DeliveryEntryFilters;
   localeFallback?: boolean;
 };
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+/** The ids a reference field holds, in the order the author arranged them. */
+function referenceIds(value: unknown, many: boolean): string[] {
+  if (many) {
+    return Array.isArray(value) ? unique(value.filter((id): id is string => typeof id === 'string')) : [];
+  }
+  return typeof value === 'string' && value ? [value] : [];
+}
 
 function publishedEntryWhere(
   workspaceId: string,

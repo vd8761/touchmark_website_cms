@@ -12,11 +12,8 @@ import {
   Pill,
   Skeleton,
 } from '../components/primitives';
-import {
-  FIELD_TYPE_GROUPS,
-  type ContentTypeDto,
-  type FieldTypeName,
-} from '../lib/content-types';
+import { FieldForm } from '../components/FieldForm';
+import { type ContentTypeDto, type FieldDto } from '../lib/content-types';
 import { useSession } from '../lib/session';
 
 /**
@@ -258,6 +255,7 @@ function TypeEditor({
   onDeleted: () => void;
 }) {
   const [addingField, setAddingField] = useState(false);
+  const [editingFieldId, setEditingFieldId] = useState<string | null>(null);
   const [confirmName, setConfirmName] = useState('');
   const [actionError, setActionError] = useState<ApiError | null>(null);
 
@@ -314,51 +312,84 @@ function TypeEditor({
           </p>
         ) : (
           <ul className="divide-y divide-border">
-            {type.fields.map((field) => (
-              <li key={field.id} className="flex items-center justify-between gap-3 py-2.5">
-                <div className="min-w-0">
-                  <p className="flex items-center gap-2 text-sm text-text">
-                    {field.name}
-                    {field.required && <Pill tone="warning">required</Pill>}
-                    {field.deprecated && <Pill tone="neutral">deprecated</Pill>}
-                  </p>
-                  <p className="font-mono text-xs text-text-secondary">
-                    {field.api_id} · {field.type}
-                  </p>
-                </div>
+            {type.fields.map((field) =>
+              editingFieldId === field.id ? (
+                <li key={field.id} className="py-2.5">
+                  <FieldForm
+                    existing={field}
+                    contentTypes={allTypes}
+                    base={`${base}/${type.id}/fields`}
+                    onCancel={() => setEditingFieldId(null)}
+                    onSaved={() => {
+                      setEditingFieldId(null);
+                      onChanged();
+                    }}
+                  />
+                </li>
+              ) : (
+                <li key={field.id} className="flex items-center justify-between gap-3 py-2.5">
+                  <div className="min-w-0">
+                    <p className="flex flex-wrap items-center gap-2 text-sm text-text">
+                      {field.name}
+                      {field.required && <Pill tone="warning">required</Pill>}
+                      {field.unique_value && <Pill tone="neutral">unique</Pill>}
+                      {field.localised && <Pill tone="neutral">translatable</Pill>}
+                      {field.group && <Pill tone="neutral">{field.group}</Pill>}
+                      {field.deprecated && <Pill tone="neutral">deprecated</Pill>}
+                    </p>
+                    <p className="font-mono text-xs text-text-secondary">
+                      {field.api_id} · {field.type}
+                      {/* Surfaced in the list because a rule you cannot see is a
+                          rule you rediscover through a failed publish. */}
+                      {summariseRules(field) && (
+                        <span className="font-sans"> · {summariseRules(field)}</span>
+                      )}
+                    </p>
+                  </div>
 
-                {editable && (
-                  <div className="flex shrink-0 gap-3 text-xs">
-                    {!field.deprecated && (
+                  {editable && (
+                    <div className="flex shrink-0 gap-3 text-xs">
                       <button
                         type="button"
-                        onClick={() => deprecate.mutate(field.id)}
+                        onClick={() => {
+                          setAddingField(false);
+                          setEditingFieldId(field.id);
+                        }}
                         className="text-text-secondary hover:text-text"
-                        title="Hide from the editor but keep serving it through the API"
                       >
-                        Deprecate
+                        Edit
                       </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => removeField.mutate(field.id)}
-                      className="text-danger hover:underline"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                )}
-              </li>
-            ))}
+                      {!field.deprecated && (
+                        <button
+                          type="button"
+                          onClick={() => deprecate.mutate(field.id)}
+                          className="text-text-secondary hover:text-text"
+                          title="Hide from the editor but keep serving it through the API"
+                        >
+                          Deprecate
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => removeField.mutate(field.id)}
+                        className="text-danger hover:underline"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  )}
+                </li>
+              ),
+            )}
           </ul>
         )}
 
         {addingField && (
-          <AddField
+          <FieldForm
             contentTypes={allTypes}
             base={`${base}/${type.id}/fields`}
             onCancel={() => setAddingField(false)}
-            onAdded={() => {
+            onSaved={() => {
               setAddingField(false);
               onChanged();
             }}
@@ -403,155 +434,32 @@ function TypeEditor({
   );
 }
 
-function AddField({
-  base,
-  contentTypes,
-  onCancel,
-  onAdded,
-}: {
-  base: string;
-  contentTypes: ContentTypeDto[];
-  onCancel: () => void;
-  onAdded: () => void;
-}) {
-  const [name, setName] = useState('');
-  const [type, setType] = useState<FieldTypeName>('text');
-  const [required, setRequired] = useState(false);
-  const [options, setOptions] = useState('');
-  const [relationTypeApiId, setRelationTypeApiId] = useState('');
+/**
+ * A one-line digest of a field's rules, for the list.
+ *
+ * Rules were previously invisible once set — you found out a field had a
+ * 60-character limit when a publish failed. Only rules the API enforces appear
+ * here, and the order is fixed so the same field always reads the same way.
+ */
+function summariseRules(field: FieldDto): string {
+  const rules = (field.validation ?? {}) as Record<string, unknown>;
+  const parts: string[] = [];
 
-  const needsOptions = type === 'enum' || type === 'multi_enum';
-  const needsRelationType = type === 'relation_one' || type === 'relation_many';
+  if (rules.minLength !== undefined || rules.maxLength !== undefined) {
+    parts.push(`${rules.minLength ?? 0}–${rules.maxLength ?? '∞'} chars`);
+  }
+  if (rules.min !== undefined || rules.max !== undefined) {
+    parts.push(`${rules.min ?? '−∞'} to ${rules.max ?? '∞'}`);
+  }
+  if (rules.minItems !== undefined || rules.maxItems !== undefined) {
+    parts.push(`${rules.minItems ?? 0}–${rules.maxItems ?? '∞'} items`);
+  }
+  if (rules.regex) parts.push('pattern');
 
-  const create = useMutation({
-    mutationFn: () =>
-      api.post<{ entries_marked_incomplete: number }>(base, {
-        name,
-        type,
-        required,
-        ...(needsOptions
-          ? {
-              config: {
-                options: options
-                  .split(',')
-                  .map((v) => v.trim())
-                  .filter(Boolean)
-                  .map((value) => ({ value })),
-              },
-            }
-          : {}),
-        ...(needsRelationType ? { config: { relationTypeApiId } } : {}),
-      }),
-    onSuccess: onAdded,
-  });
+  const options = field.config?.options?.length;
+  if (options) parts.push(`${options} option${options === 1 ? '' : 's'}`);
 
-  const error = create.error as ApiError | null;
+  if (field.config?.relationTypeApiId) parts.push(`→ ${field.config.relationTypeApiId}`);
 
-  return (
-    <div className="space-y-4 rounded-lg bg-surface-subtle p-4">
-      <p className="text-sm font-medium text-text">Add a field</p>
-
-      <Field label="Name" hint="The API ID is derived from this and is permanent.">
-        <Input value={name} onChange={(event) => setName(event.target.value)} placeholder="Hero Image" autoFocus />
-      </Field>
-
-      <div className="space-y-3">
-        <p className="text-sm font-medium text-text">Type</p>
-        {FIELD_TYPE_GROUPS.map((group) => (
-          <div key={group.group}>
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">
-              {group.group}
-            </p>
-            <div className="mt-1 flex flex-wrap gap-1.5">
-              {group.types.map((option) => (
-                <button
-                  key={option.type}
-                  type="button"
-                  title={option.hint}
-                  onClick={() => setType(option.type)}
-                  className={`rounded-lg border px-2.5 py-1 text-xs ${
-                    type === option.type
-                      ? 'border-accent bg-accent/10 text-accent'
-                      : 'border-border text-text-secondary hover:bg-surface'
-                  }`}
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-
-      {needsRelationType && (
-        <Field
-          label="Links to"
-          hint="Which content type this field points at. Authors get a searchable picker of its entries."
-        >
-          <select
-            value={relationTypeApiId}
-            onChange={(event) => setRelationTypeApiId(event.target.value)}
-            className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text outline-none focus:border-accent"
-          >
-            <option value="">Choose a content type…</option>
-            {contentTypes.map((option) => (
-              <option key={option.id} value={option.api_id}>
-                {option.name}
-              </option>
-            ))}
-          </select>
-        </Field>
-      )}
-
-      {needsOptions && (
-        <Field label="Options" hint="Comma-separated values.">
-          <Input
-            value={options}
-            onChange={(event) => setOptions(event.target.value)}
-            placeholder="draft, review, final"
-          />
-        </Field>
-      )}
-
-      <label className="flex items-start gap-2 text-sm text-text">
-        <input
-          type="checkbox"
-          checked={required}
-          onChange={(event) => setRequired(event.target.checked)}
-          className="mt-1"
-        />
-        <span>
-          Required
-          {/* §7.1 wants this consequence stated before the action, not after. */}
-          <span className="block text-xs text-text-secondary">
-            Existing entries will be marked incomplete and cannot be re-published until this field
-            is filled. Already-published versions stay live.
-          </span>
-        </span>
-      </label>
-
-      {error && (
-        <div className="rounded-lg border border-danger/30 bg-danger/5 p-3">
-          <p className="text-sm text-text">{error.message}</p>
-          {error.detail && <p className="mt-1 text-xs text-text-secondary">{error.detail}</p>}
-        </div>
-      )}
-
-      <div className="flex justify-end gap-2">
-        <Button variant="ghost" onClick={onCancel}>
-          Cancel
-        </Button>
-        <Button
-          variant="primary"
-          loading={create.isPending}
-          // A relation with no target renders as an unusable field in the
-          // editor, so it cannot be created in the first place.
-          disabled={!name || (needsRelationType && !relationTypeApiId)}
-          onClick={() => create.mutate()}
-        >
-          Add field
-        </Button>
-      </div>
-    </div>
-  );
+  return parts.join(' · ');
 }

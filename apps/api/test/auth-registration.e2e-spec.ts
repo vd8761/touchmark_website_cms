@@ -33,7 +33,7 @@ afterAll(async () => {
 });
 
 function newEmail(label: string): string {
-  return `${label}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@example.test`;
+  return `${label}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@e2e.example.test`;
 }
 
 describe('POST /admin/v1/auth/register once an administrator exists', () => {

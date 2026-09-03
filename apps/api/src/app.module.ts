@@ -50,6 +50,10 @@ import { EmailWebhookController } from './email/email-webhook.controller';
 import { SenderIdentityService } from './email/sender-identity.service';
 import { EventsService } from './events/events.service';
 import { JobQueueService } from './jobs/job-queue.service';
+import { PurgeService } from './jobs/purge.service';
+import { HttpObservabilityInterceptor } from './observability/http-observability.interceptor';
+import { MetricsController } from './observability/metrics.controller';
+import { MetricsService } from './observability/metrics.service';
 import {
   InvitationsController,
   OrganisationsController,
@@ -63,6 +67,24 @@ import { WorkspacesService } from './workspaces/workspaces.service';
 import { WebhooksController } from './webhooks/webhooks.controller';
 import { WebhooksService } from './webhooks/webhooks.service';
 
+const TTL_UNITS: Record<string, number> = { s: 1, m: 60, h: 3600, d: 86_400 };
+
+/**
+ * Turns `ACCESS_TOKEN_TTL` into a count of seconds.
+ *
+ * jsonwebtoken types the string form as a union of literal durations, which an
+ * environment variable can never satisfy. Converting to seconds here keeps the
+ * config free-form *and* fails loudly at boot on a typo, rather than signing
+ * tokens with whatever a silent cast produced.
+ */
+function parseTtl(value: string): number {
+  const match = /^(\d+)([smhd])?$/.exec(value.trim());
+  if (!match) {
+    throw new Error(`ACCESS_TOKEN_TTL must look like "900", "15m" or "1h" — got "${value}".`);
+  }
+  return Number(match[1]) * (match[2] ? TTL_UNITS[match[2]] : 1);
+}
+
 @Module({
   imports: [
     ConfigModule.forRoot({ isGlobal: true, envFilePath: ['.env', '../../.env'] }),
@@ -71,12 +93,18 @@ import { WebhooksService } from './webhooks/webhooks.service';
       inject: [ConfigService],
       useFactory: (config: ConfigService) => ({
         secret: config.getOrThrow<string>('JWT_SECRET'),
-        signOptions: { expiresIn: config.get<string>('ACCESS_TOKEN_TTL') ?? '15m' },
+        // `expiresIn` is typed as a literal duration union ("15m", "1h", …) by
+        // jsonwebtoken's types; this value comes from the environment, so the
+        // shape can only be checked at runtime — see the parse below.
+        signOptions: {
+          expiresIn: parseTtl(config.get<string>('ACCESS_TOKEN_TTL') ?? '15m'),
+        },
       }),
     }),
   ],
   controllers: [
     HealthController,
+    MetricsController,
     DeliveryController,
     DeliveryContentController,
     DeliveryAudienceController,
@@ -130,6 +158,9 @@ import { WebhooksService } from './webhooks/webhooks.service';
     MenusService,
     StorageService,
     MediaService,
+    // Registered after StorageService and MediaService: the purge job deletes
+    // stored objects before the rows that point at them.
+    PurgeService,
 
     // Order matters. RequestContextGuard resolves who is asking and what they
     // may do (§3.4 layer 1); PermissionsGuard then enforces it (layer 2). Both
@@ -138,13 +169,19 @@ import { WebhooksService } from './webhooks/webhooks.service';
     { provide: APP_GUARD, useClass: RequestContextGuard },
     { provide: APP_GUARD, useClass: PermissionsGuard },
 
+    MetricsService,
+
+    // Registered before the envelope so the measured duration covers response
+    // serialisation too — the part a client actually waits for.
+    { provide: APP_INTERCEPTOR, useClass: HttpObservabilityInterceptor },
     { provide: APP_INTERCEPTOR, useClass: EnvelopeInterceptor },
     { provide: APP_FILTER, useClass: ApiExceptionFilter },
   ],
 })
 export class AppModule implements NestModule {
   configure(consumer: MiddlewareConsumer): void {
-    consumer.apply(RequestIdMiddleware).forRoutes('*');
-    consumer.apply(ApiRequestLogMiddleware).forRoutes('v1/*');
+    // Express 5 requires named wildcards; a bare `*` no longer parses.
+    consumer.apply(RequestIdMiddleware).forRoutes('{*splat}');
+    consumer.apply(ApiRequestLogMiddleware).forRoutes('v1/{*splat}');
   }
 }

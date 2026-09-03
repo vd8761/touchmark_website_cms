@@ -26,9 +26,15 @@ const RESET_TTL_MS = 30 * 60 * 1000; // §6.1: 30-minute expiry
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
 
-  /** §6.1: 5 failed logins per email / 15 min, 20 per IP / 15 min. */
-  private readonly byEmail = new RateLimiter(5, 15 * 60 * 1000);
-  private readonly byIp = new RateLimiter(20, 15 * 60 * 1000);
+  /**
+   * §6.1: 5 failed logins per email / 15 min, 20 per IP / 15 min.
+   *
+   * Assigned in the constructor body rather than as field initialisers because
+   * both now count in Postgres and need the injected client, which does not
+   * exist until the parameter properties are bound.
+   */
+  private readonly byEmail: RateLimiter;
+  private readonly byIp: RateLimiter;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -37,7 +43,10 @@ export class AuthService {
     private readonly mail: MailService,
     private readonly audit: AuditService,
     private readonly admins: PlatformAdminsService,
-  ) {}
+  ) {
+    this.byEmail = new RateLimiter(prisma, 5, 15 * 60 * 1000, 'email');
+    this.byIp = new RateLimiter(prisma, 20, 15 * 60 * 1000, 'ip');
+  }
 
   /**
    * Creates an account.
@@ -120,8 +129,8 @@ export class AuthService {
   ): Promise<{ user: UserDto; tokens: IssuedTokens }> {
     const email = input.email.trim().toLowerCase();
 
-    this.byEmail.check(email, 'Too many sign-in attempts for this account.');
-    this.byIp.check(client.ip ?? 'unknown', 'Too many sign-in attempts from this address.');
+    await this.byEmail.check(email, 'Too many sign-in attempts for this account.');
+    await this.byIp.check(client.ip ?? 'unknown', 'Too many sign-in attempts from this address.');
 
     const user = await this.prisma.asSystem((tx) =>
       tx.user.findUnique({ where: { email } }),
@@ -134,8 +143,8 @@ export class AuthService {
       : await this.passwords.verify(DUMMY_HASH, input.password).then(() => false);
 
     if (!user || !valid) {
-      this.byEmail.record(email);
-      this.byIp.record(client.ip ?? 'unknown');
+      await this.byEmail.record(email);
+      await this.byIp.record(client.ip ?? 'unknown');
       throw new AppError('invalid_credentials', 'Incorrect email or password.');
     }
 
@@ -149,7 +158,9 @@ export class AuthService {
       });
     }
 
-    this.byEmail.reset(email);
+    // The IP counter is deliberately not reset: one success from an address
+    // that has been guessing at many accounts should not clear its tally.
+    await this.byEmail.reset(email);
 
     await this.prisma.asSystem((tx) =>
       tx.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } }),

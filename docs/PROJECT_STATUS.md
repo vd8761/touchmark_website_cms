@@ -148,18 +148,32 @@ test** — so adding an endpoint without a test breaks the build.
 
 | Metric | Value |
 |---|---|
-| Tests passing | **235** (223 API, 12 shared) |
+| Tests passing | **328** (293 API — 89 unit, 204 e2e — 23 portal, and 12 shared) |
 | Registered routes | 132 total — 76 workspace-scoped, 17 org-scoped |
 | Isolation coverage | 76 of 76 workspace-scoped routes |
 | RLS coverage | 27 of 27 tables carrying `workspace_id` |
 | Database tables | 36 public tables |
-| Documented OpenAPI paths | 121 total — 99 Admin, 22 Delivery |
-| Migrations | 6 |
+| Documented OpenAPI paths | 123 total — 101 Admin, 22 Delivery (`/metrics` is deliberately excluded) |
+| Migrations | 10 |
 | Source size | ~18,700 lines API, ~5,800 lines portal, ~3,200 lines tests |
 
 Both apps typecheck and build clean. The full flow has been exercised against a real PostgreSQL
-instance and the **live Resend API**. `npm run lint --if-present` is currently blocked because
-neither app workspace has a resolvable `eslint` binary installed.
+instance and the **live Resend API**. Lint now runs: ESLint 9 flat config at the repo root, extended
+per workspace, wired into CI ahead of the typecheck, and passing with zero errors in both apps.
+
+The `security` job (`npm audit --audit-level=high`) is **green, with zero advisories at any
+level**. It had been failing on 32, one critical. The old framing — "all devDependencies through
+`@nestjs/cli`" — had stopped being true: `nodemailer`, `vitest` and `@nestjs/core` itself were
+direct and vulnerable. Clearing them meant the NestJS 10 → 11 move, and with it Express 5, whose
+router no longer accepts a bare `*`; the wildcard routes are named (`{*splat}`) and a matched
+wildcard now arrives as an array of segments rather than `params['0']`. `js-yaml` is pinned
+exactly by `@nestjs/swagger`, so it needs a scoped `overrides` entry to reach a fixed release —
+worth remembering the next time an advisory looks unfixable without a downgrade.
+
+One more CI fact worth knowing. The isolation merge blocker was **red on `main`**: `POST
+/workspaces/:workspaceId/transfer-
+ownership` shipped in commit 788d07a without an isolation test, which is exactly the case the
+coverage guard exists to catch. The test is now in place and the suite is green.
 
 ### Phase 0 — Foundations ✅
 
@@ -255,6 +269,8 @@ The shared job layer defines the twelve spec job names. Three have processors �
 - `GET /v1/me`, authenticated by any valid API key, echoing workspace, scopes and limits
 - Delivery reads for content type schemas, published entries by list/slug/id, related entries,
   search, taxonomies/terms, resolved menus and completed media assets
+- The §14.1 query contract on content reads: cursor pagination, sorting, filtering, field
+  selection, locale fallback, and `?expand=` relation/media expansion
 - Subscriber/list/form Delivery endpoints, short-lived preview tokens, outbound webhooks with
   encrypted signing secrets and replayable delivery records
 - Separate generated `openapi-admin.json` and `openapi-delivery.json`
@@ -264,8 +280,18 @@ The shared job layer defines the twelve spec job names. Three have processors �
   create form hides server-only scopes when the type is publishable, so the API's 422 for that
   combination is unreachable from the UI rather than merely handled.
 
+- Admin portal **Developer guide** (`pages/DeveloperGuide.tsx`, Developers → Developer guide) — the
+  integration wiki of §16, rendered against the reader's own site. Code samples carry this
+  deployment's base URL and the workspace's real content-type api_ids, and the "Your content model"
+  section is generated from the live schema, so a developer never has to translate a generic
+  example into their own field names. Covers the two-API split, key types and where each may be
+  used, reading and querying, Next.js/Astro/plain-fetch recipes, forms and subscribers, webhook
+  signature verification, preview tokens, and the error/rate-limit contract. Ungated by permission:
+  the person wiring up the site is not always the person holding `apikey.manage`.
+
 **Still missing from Phase 2 polish:** GitHub secret-scanning partner auto-revoke, "unused for
-90 days" notifications, plan-ceiling enforcement, SDK/embed/CLI packages, hosted docs/playground,
+90 days" notifications, plan-ceiling enforcement, SDK/embed/CLI packages, a hosted (public) docs
+site and playground,
 dynamic per-workspace OpenAPI expansion, CDN purges and response-cache invalidation, request-log
 partition/retention automation, redacted header snapshots, and webhook failure notification
 emails.
@@ -276,7 +302,39 @@ emails.
 
 Three items were consciously deferred rather than half-built. Each is marked in code.
 
-### 4.1 Rich-text block editor · Large · Spec §7.3
+### 4.1 Rich-text block editor · Built · Spec §7.3
+
+`components/rich-text/` — TipTap over the document format that already existed, so the stored shape
+is unchanged and anything written against the old textarea opens as-is.
+
+- Blocks: paragraph, H2–H4, bullet and numbered lists, quote, code block, divider, table, image
+  from the media library, embed, callout, CTA button.
+- A floating selection toolbar, a `/` slash menu with keyboard navigation, and a document outline
+  that jumps to headings.
+- **H1 is excluded on purpose** — it is the entry's title field, and offering it in the body
+  produces two competing top-level headings on the rendered page.
+- **Images carry `assetId` alongside `src`.** A URL alone rots when a presigned link expires or a
+  CDN domain changes; the id lets a consumer re-resolve through the media endpoint.
+- **Embeds store a URL, never provider markup.** Freezing an iframe into the document hands every
+  consumer a third-party script they did not choose to run.
+- **Callouts and CTAs are their own nodes**, not styled blockquotes and links — a consumer needs to
+  know something is a warning to render it as one.
+- Link marks are restricted to `http`, `https`, `mailto`, `tel`; a pasted `javascript:` URL would
+  otherwise become executable in whatever renders the document.
+- Lazy-loaded. TipTap is ~425KB raw, and importing it eagerly put that in the bundle every visitor
+  downloads including the login screen; split out, the main bundle is unchanged (+2KB) and the
+  editor chunk arrives only when an entry has a rich-text field.
+
+Verified by a full round-trip through the API — a document containing every custom node came back
+deep-equal (Postgres `jsonb` reorders keys, nothing more), with `assetId` and CTA attributes intact.
+`extensions.test.ts` pins the node and attribute names, since renaming either would silently orphan
+stored content and the server only checks that the root is a `doc`.
+
+**Still to do here:** the Delivery API's optional `?format=html` rendering (§7.3) — a separate piece
+of work that must produce the same output the editor previews. Note also that the server accepts
+*any* JSON under a `doc` root, so node-level correctness has no backstop outside this schema file.
+
+### 4.1b Original notes · Large · Spec §7.3
 
 **State:** the `rich_text` field stores and validates a structured JSON document (Open Decision #3
 — never an HTML blob). The editor currently exposes that JSON directly in a textarea.
@@ -332,6 +390,98 @@ EXIF stripping with an opt-out.
 upload request — generating derivatives inline makes uploads slow and failure-prone. The queue
 now exists; the `media-transform` processor and image pipeline do not.
 
+### 4.3b Field configuration UI · Built
+
+`components/FieldForm.tsx` replaces a form that offered a type and a Required checkbox. The
+validation rules, defaults, help text and grouping were all supported by the API and simply
+unreachable from the UI — the only way to set a character limit or an enum label was to call the
+endpoint by hand.
+
+- **Editing a field is now possible at all.** The builder previously offered create, deprecate and
+  delete only, despite `PATCH .../fields/:id` existing. Renaming a field meant deleting it and
+  losing every value.
+- Per-type configuration driven by a capability map that mirrors `field-validation.ts`, so every
+  control maps to a rule the server actually enforces. Offering a rule the API would ignore teaches
+  people the schema is advisory.
+- Options editor with value/label rows, replacing a comma-separated string that could not express
+  a label at all.
+- Live API ID preview, using the same derivation as `content-types.service.ts#toApiId` — shown
+  while it is still changeable rather than discovered later in a payload.
+- A live preview rendering the real `FieldInput` against the draft definition, so the effect of
+  required, enum labels or help text is visible before saving.
+- The field list now shows each field's rules, group and flags; previously a limit was invisible
+  once set and was rediscovered through a failed publish.
+
+**Fixed in the API alongside it:** `help_text` and `group` could be set but never cleared —
+`updateField` collapsed absent and empty to `undefined`, which Prisma reads as "no change". They
+are now `null`-able through an empty string, with absent still meaning "leave alone".
+
+### 4.3c Autosave · Built · Spec §7.3
+
+`lib/use-autosave.ts` plus the version coalescing in `entries.service.ts#snapshot`.
+
+**The version-churn problem is the interesting half.** A snapshot is written per save, and retention
+keeps the last 50 unpublished ones. Autosaving every three seconds is roughly twenty versions a
+minute, so shipping the timer alone would have evicted every meaningful restore point within about
+two minutes of typing — a feature meant to protect an author's work quietly destroying their ability
+to recover it.
+
+So an autosave **amends** the author's current working snapshot instead of adding one, and an
+explicit save always commits its own restore point. The rule is: *autosave keeps your place, ⌘S
+makes a marker.* Amending is refused when the latest snapshot belongs to someone else, was
+published, carries a change note, or is older than `AUTOSAVE_COALESCE_MS` (10 minutes) — each of
+which means the row is somebody's deliberate restore point.
+
+Other decisions worth keeping:
+
+- **Never on a published entry.** A PATCH does not touch what is live, but it does flip the entry
+  into "has unpublished changes", and doing that silently because someone typed one character into
+  a live page is not the editor's decision to make. The dirty bar and `⌘S` remain there.
+- **Autosave stops after a failure** rather than retrying on every keystroke, which would turn one
+  409 into a request per character and bury the error the author needs to read. The manual Save
+  button resumes it.
+- **A save no longer clobbers in-flight typing.** Our own save bumps `current_version`, which fired
+  the editor's reset effect and overwrote the draft with the copy the server echoed back. That was
+  a narrow race with manual saves; at three-second intervals it would have been a routine way to
+  lose a sentence. The reset now ignores versions the editor itself produced, and the dirty flag is
+  recomputed against what was actually sent.
+- `beforeunload` remains as a backstop: autosave narrows the loss window to a few seconds, it does
+  not close it.
+
+Covered by `test/autosave.e2e-spec.ts` — six cases against a real database, including that a burst
+of five autosaves produces one version, that published and change-noted snapshots are never
+amended, and that a second author starts their own.
+
+### 4.3d Version comparison · Built · Spec §7.4
+
+`lib/diff.ts` and `components/VersionCompare.tsx`, plus a new
+`GET .../entries/:entryId/versions/:version` returning one version's stored values. The list
+endpoint deliberately still omits `data` — sending it for a hundred versions would be megabytes to
+render a column of timestamps.
+
+Restoring already worked; seeing *what* you would be restoring did not. Autosave made that worse by
+producing far more history than a person clicking Save ever did, so "which of these is the one I
+want" became a question the UI could not answer.
+
+- Word-level diff via a hand-written LCS. One classic algorithm over short strings is cheaper than
+  another dependency in the tree, and it is the piece most worth being
+  able to read when a diff looks wrong.
+- **Whitespace inside an edit is absorbed into it.** Changing "b c" to "x y" leaves the space
+  between technically unchanged, so a naive walk renders two highlight boxes with a gap punched
+  through one edited phrase. Change hunks are grouped so it reads as the single edit it is.
+- **Structural equality ignores key order.** A `JSON.stringify` comparison would report a change
+  whenever two objects agree but were built in a different order — which is what Postgres `jsonb`
+  does on every round trip, so every rich-text field would have looked edited every time.
+- Rich text is flattened to its prose for display; a reader wants to know a paragraph changed, not
+  that a ProseMirror node's attrs gained a key. Structural changes still register as changes.
+- Fields **no longer in the schema** still appear when they held a value in either version, or old
+  versions would look emptier than they were.
+- Unchanged fields are collapsed behind a "show N unchanged" toggle.
+
+Covered by 17 unit tests in `lib/diff.test.ts`, including the whitespace-bridge case, jsonb key
+reordering, and a 4000-word field degrading to "replaced" rather than freezing the tab on an O(n·m)
+table.
+
 ### 4.4 Content module gaps
 
 Smaller items from §7 that are specified but not built:
@@ -341,8 +491,8 @@ Smaller items from §7 that are specified but not built:
 | **Localisation UI** | §7.5 | Medium | Schema supports it (`locale`, `translation_group_id`, per-field `localised`). Missing: locale switcher in the editor, translation-status badges (`Not started` / `Outdated` / `Up to date`), "copy from default locale", side-by-side translation view, per-locale publish states, locale-completeness column |
 | **Review workflow UI** | §7.2 | Small–Medium | `review_requests` table and the `in_review` / `changes_requested` states exist and are enforced on publish. Missing: submit-for-review dialog with assignee, reviewer notification, approve/reject actions, comment threads |
 | **Entry comments** | §5.2, §17.5 | Medium | Table not yet created. Needs threaded comments, `@` mentions with notification, resolve/unresolve, and field-anchored comments |
-| **Version comparison** | §7.4 | Medium | Restore works. Missing: side-by-side field-level diff with word-level highlighting inside text fields |
-| **Autosave** | §7.3 | Small | Editor saves on demand (`⌘S`) with an explicit dirty bar. Spec asks for autosave every 3s of inactivity — never over a published version |
+| ~~**Version comparison**~~ | §7.4 | Built | Side-by-side field-level diff with word-level highlighting — see §4.3d |
+| ~~**Autosave**~~ | §7.3 | Built | Saves after 3s of inactivity, never on a published entry. Autosaves **amend** the author's working snapshot rather than adding one — see below |
 | **Saved views** | §7.7, §17.4 | Medium | Content list has fixed status tabs. Missing: named filter combinations, pinned as tabs, personal or shared |
 | **Bulk actions** | §7.7 | Medium | Missing entirely: publish, unpublish, archive, delete, assign taxonomy, change author, duplicate, export — running as background jobs above 100 items |
 | **Column configuration** | §7.7 | Small–Medium | Fixed columns today. Spec wants user-configurable columns for any field, saved per user per type |
@@ -412,7 +562,14 @@ slug at delivery time, so renaming a slug never breaks a menu (§7.6).
 published-entry-by-slug/id, related entries, search, taxonomies/terms, resolved menus,
 completed-media reads, subscriber/list/form endpoints and preview-token reads are built.
 Cursor pagination, sorting, filtering, field selection and locale fallback are implemented for
-content reads. Still needed: relation expansion (`expand=`), and richer rich-text rendering options.
+content reads, as is relation expansion — `?expand=data.author,data.hero_image` resolves
+`relation_one`, `relation_many`, `media` and `media_list` fields inline, one level deep, in two
+queries per page however many rows it holds. Expanded targets pass through the same published
+filter as any other Delivery read, so a relation pointing at a draft comes back `null` rather than
+leaking unpublished content; an id that no longer resolves is `null` for a single reference and
+absent from a list, because one deleted target should not fail the whole page. Expanding a field
+that holds no reference is a `400` naming the field, not a silent no-op. Still needed: richer
+rich-text rendering options (`?format=html`, §4.1).
 Search is now Postgres FTS (§11.4).
 
 ### 5.3 Key authentication pipeline · Medium · Spec §12.2
@@ -831,25 +988,35 @@ bounded below by the poll interval (5s by default), and the queue will not carry
 Neither matters for publishing content or delivering webhooks.
 
 Twelve job names are declared in `jobs/job-names.ts`. Three have processors:
-`publish-scheduled-content`, `webhook-deliver` and `key-usage-flush` (which sweeps expired
-rate-limit counters).
+`publish-scheduled-content`, `webhook-deliver`, `key-usage-flush` (which sweeps expired
+rate-limit counters) and `purge-soft-deleted`.
 
 **Still needed:** processors for `media-transform`, `subscriber-import`, `subscriber-export`,
-`analytics-rollup`, `purge-soft-deleted`, `campaign-prepare`, `campaign-send-batch`,
-`automation-tick` and `ingest-esp-events`. Also worth adding before the queue carries real volume:
-an admin view of dead-lettered jobs, and retention for completed rows.
+`analytics-rollup`, `campaign-prepare`, `campaign-send-batch`, `automation-tick` and
+`ingest-esp-events`. Retention for completed and dead-lettered rows is now handled by
+`purge-soft-deleted` (§11.6); an admin view of dead-lettered jobs is still missing.
 
-### 11.2 Admin rate limiting and session revocation are in-process · Medium
+### 11.2 Auth rate limiting · Now shared · Session revocation · Was never the problem
 
-Auth rate limiting (`auth/rate-limiter.ts`) and the session-revocation cache
-(`TokenService.isSessionRevoked`) are in-process. On one instance both are correct. Across N
-instances, auth limits are roughly N times looser, and a revoked session can survive on another
-instance for exactly one request — the database is still the authority and is consulted on every
-cache miss.
+**Auth rate limiting is fixed.** `auth/rate-limiter.ts` counts in `rate_limit_counters` — the same
+Postgres table the Delivery API limiter uses — instead of a per-process `Map`. The §6.1 limits (5
+failed logins per email / 15 min, 20 per IP) are now properties of the platform rather than of one
+process, so adding instances no longer multiplies them. Three buckets model one subject: attempts
+in the current window, strikes taken today, and the lockout deadline. They are separate because a
+single counter cannot express "try again in four hours" when the window it counts in is fifteen
+minutes long. Lockouts extend with `GREATEST` so two instances recording failures at the same
+moment cannot let the shorter lockout overwrite the longer one.
 
-The fix no longer needs new infrastructure: `rate_limit_counters` already provides a shared
-fixed-window counter in Postgres, and both call sites sit behind narrow interfaces designed to be
-swapped without touching callers. Delivery API key rate limiting already uses it.
+**Session revocation was already correct, and the previous entry here was wrong.**
+`TokenService.isSessionRevoked` keeps a *positive-only* cache: it answers "already known revoked"
+and every other outcome falls through to the database. A session revoked on instance A therefore
+misses instance B's map, B queries, B sees `revoked_at`, and the request is refused on its first
+attempt. There is no window in which another instance serves a revoked session — not one request,
+not any. Nothing needed moving.
+
+What it does cost is one read per authenticated request while a session is valid. That read should
+stay. Caching *validity* is exactly what would introduce the staleness this design avoids, and it
+would hand anyone holding a stolen access token a guaranteed grace period after the victim revokes.
 
 ### 11.3 Outbox dispatcher · Medium · Spec §4.7
 
@@ -894,28 +1061,100 @@ Two ways to get the index working, when a workspace is large enough to need it:
 **Still open:** media search is still `ILIKE` over filename, alt text and caption. That table is
 small and the columns are short, so it has not been worth the same treatment.
 
-### 11.5 Pagination · Small
+### 11.5 Pagination · Built
 
-Audit logs and member lists are capped at 50 rows with no pagination. Entries already use cursor
-pagination per §14.1; the rest should follow.
+The §14.1 cursor contract now lives in `common/pagination.ts` and is used by the site and
+organisation audit logs, API key request logs and webhook deliveries — all of which were previously
+capped at 50 rows with no way to reach row 51. On an append-only audit log that was a compliance
+problem rather than a convenience one: "show me what happened last Tuesday" had no answer.
 
-### 11.6 Purge jobs · Small–Medium
+Two details that were wrong before and are worth not reintroducing. `meta.total` now reports the
+count of everything matching the filter, not the size of the page — the old value made `50` mean
+both "one page" and "fifty records in total". And every ordering carries `id` as a tiebreaker,
+because two rows written in the same millisecond otherwise order arbitrarily, and a keyset cursor
+sitting on that boundary will repeat or skip rows. The organisation audit endpoint had also been
+*documenting* `?cursor=` support in its OpenAPI description for some time without implementing it.
 
-Soft deletes accumulate with nothing removing them: workspaces past their 30-day window (including
-object storage), media assets, entries, and abandoned uploads (asset rows with `uploaded_at` null).
+**Still unpaginated:** member lists (currently unbounded rather than capped, which is a different
+bug), and entry version history at 100.
 
-### 11.7 Observability · Medium · Spec §4.3, §18.3
+### 11.6 Purge jobs · Built · Spec §4.6
 
-Not started. Needed: OpenTelemetry traces, structured JSON logs, Sentry, Prometheus + Grafana,
-per-workspace metrics (a support requirement), SLOs with error budgets, and paging alerts on error
-rate, latency, queue depth and send-failure rate.
+`purge-soft-deleted` runs hourly (`jobs/purge.service.ts`) and is the platform's actual retention
+policy — every window is an env var, documented in `.env.example`.
 
-### 11.8 Operational readiness · Medium · Spec §18.3
+| Category | Default window | Notes |
+|---|---|---|
+| Sites past `purge_after` | 30 days (§6.3) | Object-storage prefix deleted first, then the row; every workspace-scoped table cascades from it |
+| Soft-deleted media assets | 30 days | Object first, row second |
+| Abandoned uploads (`uploaded_at` null) | 24 hours | Must exceed the 15-minute presign TTL |
+| Delivery API request logs | 30 days | The §5.6 retention gap; highest-volume table in the system |
+| Delivered webhook attempts | 30 days | `pending` is the retry queue and is never purged at any age |
+| Completed job rows | 7 days | |
+| Dead-lettered jobs and webhook deliveries | 30 days | Kept longer deliberately: the only record that work was asked for and never happened |
+| Expired sessions | 7 days past expiry | Kept so a replayed refresh token still trips family revocation (§6.1) rather than being rejected anonymously |
+| Expired email and preview tokens | 1 day past expiry | |
 
-Needed: streaming replication, PITR, automated backups (daily/30 days, monthly/12 months) with
-**quarterly restore tests** — the spec notes an untested backup is not a backup. Also: feature
-flags with per-workspace targeting, and runbooks for ESP outage, queue backlog, tenant data-leak
-suspicion, key compromise, mass unsubscribe, and database failover.
+Two rules run through it. **Storage before rows** — an object that outlives its row can never be
+found again, whereas a row that outlives its object is simply retried next pass. **Everything is
+batched** (`PURGE_BATCH_SIZE`, default 500 per category per pass), so the first run against a large
+existing database is a series of short transactions rather than one that holds locks for minutes.
+
+Covered by `test/purge.e2e-spec.ts` against a real database and a real storage driver.
+
+**Still worth adding:** an admin view of dead-lettered jobs before their window closes, and
+`api_request_logs` partitioning — retention is now enforced, but a monthly partition drop is far
+cheaper than a batched `DELETE` once one workspace is doing real traffic.
+
+### 11.7 Observability · Partly built · Spec §4.3, §18.3
+
+**Built, dependency-free** (`src/observability/`):
+
+- **Structured JSON logs.** One object per line with `request_id`, `workspace_id`, `org_id` and
+  `user_id` attached. Correlation rides on `AsyncLocalStorage`, so an ordinary `this.logger.warn()`
+  four awaits deep inside a service carries the request it belongs to without being handed it.
+  `LOG_FORMAT` picks json or pretty; pretty is the default in development only. Installed before
+  the module graph initialises, so bootstrap failures are structured too — those are the lines you
+  need when a deploy will not come up.
+- **Access logs and HTTP metrics.** One line and one observation per request, emitted after the
+  guards so the workspace and user are known. 5xx logs at error, 4xx at warn — logging a client's
+  404 at error level is how an error-rate alert ends up firing on someone typo'ing a URL.
+- **`GET /metrics`** in Prometheus exposition format: request counts by method/route/status, a
+  latency histogram, job rows by status, and the age of the oldest due job. Routes are labelled by
+  *pattern*, never raw path, and the distinct set is capped at 300 — a scanner hitting random URLs
+  must not create a time series per URL. The endpoint **fails closed**: without `METRICS_TOKEN` it
+  404s rather than publishing route names, traffic volume and error rates to anyone who asks.
+
+Queue depth deserves a note. Depth alone is a poor alert — a queue holding 10,000 jobs it is
+working through is healthy, while one holding three that have been due for an hour is not. The
+oldest-due-job gauge is the one to page on.
+
+**Still needed:** OpenTelemetry traces, Sentry (or equivalent) for exception aggregation, a Grafana
+dashboard and alert rules built on the metrics above, per-workspace metrics (a support
+requirement), and SLOs with error budgets.
+
+### 11.8 Operational readiness · Development safety net built · Spec §18.3
+
+**Built:** `scripts/backup.ts` — `npm run db:backup` / `db:restore`, custom-format snapshots under
+`.backups/`, last 20 kept. Not a production strategy; it is the safety net for the operations that
+actually destroy data during development: `db:reset`, the e2e teardown, a purge with the windows
+set too short, and any hand-written query that matches more rows than intended.
+
+Two details that decide whether it works at all. It dumps as `DATABASE_ADMIN_URL`, never the
+application role — `cms_app` is not the table owner and carries `NOBYPASSRLS`, so a dump taken as
+that role contains only the rows RLS lets it see, which is nearly none, and would restore as an
+empty database while looking like a real backup. And it runs the client inside the Postgres
+container when no local `pg_dump` exists, so the client version always matches the server.
+
+**The restore has been exercised, not assumed.** Snapshot, create a canary site, restore, confirm
+the canary is gone and everything older is intact. §18.3's own point is that an untested backup is
+not a backup. Re-apply RLS after any restore — `pg_restore --clean` drops the policies with the
+objects they attach to.
+
+**Still needed for production:** streaming replication, PITR, automated off-host backups
+(daily/30 days, monthly/12 months) with scheduled restore drills, feature flags with per-workspace
+targeting, and runbooks for ESP outage, queue backlog, tenant data-leak suspicion, key compromise,
+mass unsubscribe and database failover.
 
 ### 11.9 Browser test coverage · Medium
 
@@ -930,15 +1169,15 @@ Honest list of things that work but have caveats.
 
 | Limitation | Impact | Fix |
 |---|---|---|
-| Most job processors are unwritten | Scheduled content, outbound webhooks and rate-limit-counter cleanup run; media transforms, imports, campaign sending, rollups and purge work still do nothing | §11.1 |
+| Most job processors are unwritten | Scheduled content, outbound webhooks, rate-limit-counter cleanup and the retention purge run; media transforms, imports, campaign sending and rollups still do nothing | §11.1 |
 | API key plan ceilings are not enforced | Per-key limits, overrides, burst windows and subscriber-write/form-submit per-IP overlays work; billing/plan ceilings do not | §5.4 |
 | Phase 2 product polish remains | Backend endpoints exist, but SDK/embed/CLI, hosted docs/playground, dynamic per-workspace OpenAPI, secret scanning and unused-key reminders are still missing | §5 |
-| Admin/auth rate limiting is in-process | Limits are N× looser across N instances | §11.2 |
-| Session revocation cache is in-process | A revoked session may survive on another instance until token expiry (DB is still the authority, so the window is one request) | §11.2 |
-| Audit log and member lists unpaginated | Only the 50 most recent rows are visible | §11.5 |
+| ~~Admin/auth rate limiting is in-process~~ | Fixed — counts in `rate_limit_counters`, shared across instances | §11.2 |
+| Member lists unpaginated | Returns every member in one response; audit logs, request logs and webhook deliveries are now cursor-paginated | §11.5 |
+| No tracing or exception aggregation | Structured logs, access logs and `/metrics` exist; OpenTelemetry and Sentry do not | §11.7 |
 | No image variants | Full-size originals served to all viewports | §4.3 |
 | Rich text edits raw JSON | Usable but unpleasant for non-technical authors | §4.1 |
-| No autosave in the editor | Work is lost if the tab closes with unsaved changes; a dirty-state bar and unsaved guard mitigate it | §4.4 |
+| Autosave does not cover published entries | Deliberate (§4.3c) — editing a live page still needs an explicit save | §4.3c |
 | Admin UI strings are inline | Localisation becomes a retrofit, which §18.5 explicitly warned against | §9.3 |
 | No billing enforcement | Plan limits and quotas are stored but never checked | §10 |
 
@@ -974,8 +1213,8 @@ In order, with reasoning:
 2. **Turn request-log summaries into reporting UI** — §5.6. Add retention automation, persisted
    rollups and charts now that raw rows and aggregate summaries exist.
 3. **Build the remaining job processors** — §11.1. The queue is in place; next are
-   `media-transform`, `purge-soft-deleted`, `subscriber-import/export`, `analytics-rollup` and
-   `key-usage-flush`, because later product features depend on them.
+   `media-transform`, `subscriber-import/export` and `analytics-rollup`, because later product
+   features depend on them.
 4. **Write the framework guides and JS SDK together**, not after (§19 sequencing note).
 5. **Move session revocation and admin rate limiting onto the shared Postgres counter** — §11.2.
    This removes the remaining multi-instance auth blocker.

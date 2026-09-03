@@ -1,7 +1,7 @@
 import { resolve } from 'node:path';
 
 import react from '@vitejs/plugin-react';
-import { defineConfig } from 'vite';
+import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   plugins: [react()],
@@ -10,6 +10,12 @@ export default defineConfig({
       '@cms/shared': resolve(__dirname, '../../packages/shared/src/index.ts'),
       '@': resolve(__dirname, 'src'),
     },
+  },
+  test: {
+    // `e2e/` holds Playwright specs, run by `npm run test:browser` from the
+    // repo root. They use Playwright's own `test` object, so picking them up
+    // here fails at collection rather than running anything.
+    include: ['src/**/*.{test,spec}.{ts,tsx}'],
   },
   server: {
     port: 5173,

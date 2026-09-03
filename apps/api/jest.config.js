@@ -11,4 +11,8 @@ module.exports = {
     '^src/(.*)$': '<rootDir>/src/$1',
   },
   testTimeout: 30000,
+  // Removes the tenants the e2e suites create. Without it they accumulate in
+  // whatever database the suite last ran against — see test/global-teardown.ts.
+  // Set SKIP_E2E_TEARDOWN=true to keep them for debugging a failure.
+  globalTeardown: '<rootDir>/test/global-teardown.ts',
 };

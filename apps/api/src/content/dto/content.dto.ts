@@ -295,6 +295,17 @@ export class UpdateEntryDto {
   change_note?: string;
 
   @ApiPropertyOptional({
+    default: false,
+    description:
+      'Marks this as an editor autosave. Autosaves amend the author’s current working snapshot ' +
+      'instead of adding a new one, so a few minutes of typing does not evict the version ' +
+      'history. An explicit save always commits its own restore point.',
+  })
+  @IsOptional()
+  @IsBoolean()
+  autosave?: boolean;
+
+  @ApiPropertyOptional({
     description:
       'The version you loaded. Supplying it turns a concurrent overwrite into a 409 instead of ' +
       'silently discarding the other editor’s work.',

@@ -7,6 +7,14 @@
     "packages/*",
     "apps/*"
   ],
+  "overrides": {
+    "@nestjs/swagger": {
+      "js-yaml": "^5.2.3"
+    },
+    "@prisma/config": {
+      "deepmerge-ts": "^8.0.2"
+    }
+  },
   "engines": {
     "node": ">=20"
   },
@@ -20,11 +28,20 @@
     "db:down": "docker compose down",
     "db:migrate": "npm run db:migrate --workspace @cms/api",
     "db:reset": "npm run db:reset --workspace @cms/api",
-    "openapi": "npm run openapi --workspace @cms/api"
+    "openapi": "npm run openapi --workspace @cms/api",
+    "test:browser": "playwright test",
+    "test:browser:ui": "playwright test --ui"
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@playwright/test": "^1.62.1",
     "@types/node": "^22.10.2",
+    "eslint": "^9.39.5",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "eslint-plugin-react-refresh": "^0.4.26",
+    "globals": "^15.15.0",
     "prettier": "^3.4.2",
-    "typescript": "^5.7.2"
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.67.0"
   }
 }

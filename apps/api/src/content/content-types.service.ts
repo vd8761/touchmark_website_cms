@@ -349,11 +349,15 @@ export class ContentTypesService {
           required: (patch.required as boolean) ?? undefined,
           uniqueValue: (patch.unique_value as boolean) ?? undefined,
           localised: (patch.localised as boolean) ?? undefined,
-          helpText: (patch.help_text as string) ?? undefined,
+          // Absent means "leave alone"; empty means "clear it". Collapsing both
+          // to undefined made help text and grouping one-way — you could set a
+          // hint and never remove it, because Prisma reads undefined as no
+          // change and the field kept its old value.
+          helpText: clearable(patch.help_text),
           defaultValue: (patch.default_value ?? undefined) as Prisma.InputJsonValue | undefined,
           validation: (patch.validation ?? undefined) as Prisma.InputJsonValue | undefined,
           config: (patch.config ?? undefined) as Prisma.InputJsonValue | undefined,
-          group: (patch.group as string) ?? undefined,
+          group: clearable(patch.group),
         },
       });
 
@@ -630,6 +634,18 @@ export function fieldDto(field: {
 }
 
 /** Appendix B: content type API IDs are singular snake_case. */
+/**
+ * Distinguishes "not supplied" from "supplied as empty" for nullable columns.
+ *
+ * PATCH semantics: an absent key must not touch the column, while an empty
+ * string is an explicit instruction to clear it.
+ */
+function clearable(value: unknown): string | null | undefined {
+  if (value === undefined) return undefined;
+  const trimmed = String(value).trim();
+  return trimmed === '' ? null : trimmed;
+}
+
 export function toApiId(name: string): string {
   return name
     .normalize('NFKD')

@@ -1,5 +1,5 @@
-import { Body, Controller, Delete, Get, HttpCode, Param, Post, Req } from '@nestjs/common';
-import { ApiOperation, ApiParam, ApiResponse, ApiTags } from '@nestjs/swagger';
+import { Body, Controller, Delete, Get, HttpCode, Param, Post, Query, Req } from '@nestjs/common';
+import { ApiOperation, ApiParam, ApiQuery, ApiResponse, ApiTags } from '@nestjs/swagger';
 import { IsArray, IsOptional, IsString, IsUrl, MaxLength } from 'class-validator';
 import type { Request } from 'express';
 
@@ -67,13 +67,22 @@ export class WebhooksController {
   @RequirePermission('webhook.manage')
   @ApiParam({ name: 'workspaceId' })
   @ApiParam({ name: 'webhookId' })
-  @ApiOperation({ summary: 'List webhook deliveries' })
+  @ApiOperation({
+    summary: 'List webhook deliveries',
+    description:
+      'Newest first. Cursor pagination via `?cursor=` and `?limit=`. Retention is set by ' +
+      '`WEBHOOK_DELIVERY_RETENTION_DAYS`; pending attempts are never purged.',
+  })
+  @ApiQuery({ name: 'limit', required: false, description: 'Rows per page, 1–100. Default 25.' })
+  @ApiQuery({ name: 'cursor', required: false, description: 'The `next_cursor` of the last page.' })
   async deliveries(
     @Param('workspaceId') workspaceId: string,
     @Param('webhookId') webhookId: string,
+    @Query('limit') limit?: string,
+    @Query('cursor') cursor?: string,
   ) {
-    const data = await this.webhooks.listDeliveries(workspaceId, webhookId);
-    return { data, meta: { total: data.length } };
+    const page = await this.webhooks.listDeliveries(workspaceId, webhookId, { limit, cursor });
+    return { data: page.items, meta: page.meta };
   }
 
   @Post(':webhookId/test')

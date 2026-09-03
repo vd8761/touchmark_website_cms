@@ -29,6 +29,14 @@ function emptyPage(limit: number) {
 }
 /** §5.2: keep the last 50 versions per entry, plus every published version. */
 const VERSION_RETENTION = 50;
+/**
+ * How long an autosave keeps amending the same snapshot.
+ *
+ * Long enough that a continuous writing session is one restore point; short
+ * enough that coming back after lunch starts a new one, since that is the
+ * boundary a person would expect to be able to roll back to.
+ */
+const AUTOSAVE_COALESCE_MS = 10 * 60_000;
 
 @Injectable()
 export class EntriesService {
@@ -205,6 +213,7 @@ export class EntriesService {
       seo?: Record<string, unknown>;
       change_note?: string;
       expected_version?: number;
+      autosave?: boolean;
     },
   ) {
     const entry = await this.requireEntry(workspaceId, entryId);
@@ -258,7 +267,7 @@ export class EntriesService {
       });
 
       if (type.enableVersioning) {
-        await this.snapshot(tx, next, ctx.userId, input.change_note);
+        await this.snapshot(tx, next, ctx.userId, input.change_note, input.autosave === true);
         await this.pruneVersions(tx, next.id);
       }
 
@@ -516,6 +525,34 @@ export class EntriesService {
     }));
   }
 
+  /**
+   * One version, with its stored values.
+   *
+   * Separate from the list because the list is metadata for a sidebar and this
+   * is the content itself — returning `data` for a hundred versions would send
+   * megabytes to render a column of timestamps.
+   */
+  async getVersion(workspaceId: string, entryId: string, version: number) {
+    await this.requireEntry(workspaceId, entryId);
+
+    const stored = await this.prisma.withWorkspaceScope(workspaceId, (tx) =>
+      tx.contentVersion.findFirst({ where: { workspaceId, entryId, version } }),
+    );
+    if (!stored) throw notFound('Version', String(version));
+
+    return {
+      id: stored.id,
+      version: stored.version,
+      status_at_save: stored.statusAtSave,
+      change_note: stored.changeNote,
+      was_published: stored.wasPublished,
+      created_by: stored.createdBy,
+      created_at: stored.createdAt.toISOString(),
+      data: stored.data as Record<string, unknown>,
+      seo: stored.seo as Record<string, unknown>,
+    };
+  }
+
   async restoreVersion(ctx: RequestContext, workspaceId: string, entryId: string, version: number) {
     const entry = await this.requireEntry(workspaceId, entryId);
     const type = await this.types.requireType(workspaceId, entry.contentTypeId);
@@ -666,12 +703,56 @@ export class EntriesService {
     return published;
   }
 
+  /**
+   * Records a restore point.
+   *
+   * **Autosaves amend rather than accumulate.** The editor saves after a few
+   * seconds of inactivity, and a snapshot per keystroke-pause would produce
+   * twenty versions a minute — enough to push every meaningful restore point
+   * past the 50-version retention within a couple of minutes of typing. So an
+   * autosave updates the author's current working snapshot in place, while an
+   * explicit save always commits its own.
+   *
+   * Amending is confined to a snapshot that is the author's own, unpublished,
+   * carries no change note, and is recent. Any of those failing means the row
+   * is somebody's deliberate restore point and must not be overwritten.
+   */
   private async snapshot(
     tx: Prisma.TransactionClient,
     entry: { id: string; workspaceId: string; currentVersion: number; data: unknown; seo: unknown; status: EntryStatus },
     userId: string | null,
     changeNote?: string,
+    autosave = false,
   ): Promise<void> {
+    if (autosave && userId && !changeNote) {
+      const latest = await tx.contentVersion.findFirst({
+        where: { entryId: entry.id },
+        orderBy: { version: 'desc' },
+      });
+
+      const amendable =
+        latest &&
+        latest.createdBy === userId &&
+        !latest.wasPublished &&
+        latest.changeNote === null &&
+        Date.now() - latest.createdAt.getTime() < AUTOSAVE_COALESCE_MS;
+
+      if (amendable) {
+        await tx.contentVersion.update({
+          where: { id: latest.id },
+          data: {
+            // The version number moves with the entry so a restore still lands
+            // on the state the author last saw.
+            version: entry.currentVersion,
+            data: entry.data as Prisma.InputJsonValue,
+            seo: entry.seo as Prisma.InputJsonValue,
+            statusAtSave: entry.status,
+          },
+        });
+        return;
+      }
+    }
+
     await tx.contentVersion.create({
       data: {
         id: newId(),

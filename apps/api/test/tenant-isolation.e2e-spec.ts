@@ -71,6 +71,11 @@ const WORKSPACE_SCOPED_ROUTES: [string, string][] = [
   ['patch', '/admin/v1/workspaces/:workspaceId/members/:userId'],
   ['delete', '/admin/v1/workspaces/:workspaceId/members/:userId'],
   ['get', '/admin/v1/workspaces/:workspaceId/audit-logs'],
+  // Added with site ownership transfer and never covered — the coverage guard
+  // below is what caught it. Handing another tenant's site to yourself would be
+  // the most complete cross-tenant takeover the API could offer, so this route
+  // wants an isolation test more than most.
+  ['post', '/admin/v1/workspaces/:workspaceId/transfer-ownership'],
   ['get', '/admin/v1/workspaces/:workspaceId/email/configurations'],
   ['patch', '/admin/v1/workspaces/:workspaceId/email/configuration'],
   ['get', '/admin/v1/workspaces/:workspaceId/email/senders'],
@@ -112,6 +117,7 @@ const WORKSPACE_SCOPED_ROUTES: [string, string][] = [
   ['post', '/admin/v1/workspaces/:workspaceId/content/entries/:entryId/unpublish'],
   ['post', '/admin/v1/workspaces/:workspaceId/content/entries/:entryId/archive'],
   ['get', '/admin/v1/workspaces/:workspaceId/content/entries/:entryId/versions'],
+  ['get', '/admin/v1/workspaces/:workspaceId/content/entries/:entryId/versions/:version'],
   ['post', '/admin/v1/workspaces/:workspaceId/content/entries/:entryId/versions/restore'],
   ['post', '/admin/v1/workspaces/:workspaceId/content/entries/:entryId/lock'],
   ['delete', '/admin/v1/workspaces/:workspaceId/content/entries/:entryId/lock'],
@@ -162,10 +168,13 @@ describe('tenant isolation — HTTP', () => {
         .replace(':folderId', bob.folder.id)
         .replace(':keyId', bob.user.id)
         .replace(':webhookId', bob.user.id)
-        .replace(':deliveryId', bob.user.id);
+        .replace(':deliveryId', bob.user.id)
+        // A version number, not an id — 1 always exists on Bob's entry, so a
+        // leak here would be a real cross-tenant read.
+        .replace(':version', '1');
 
-      const response = await (request(app.getHttpServer()) as any)
-        [method](path)
+      const agent = request(app.getHttpServer()) as any;
+      const response = await agent[method](path)
         .set('Cookie', alice.user.cookies)
         .send({});
 

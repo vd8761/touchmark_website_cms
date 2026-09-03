@@ -23,7 +23,58 @@ export class ApiError extends Error {
   }
 }
 
-async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
+/**
+ * Endpoints that must never trigger a refresh-and-retry.
+ *
+ * Refreshing in response to a failed refresh is an infinite loop, and retrying
+ * a failed sign-in would double every rate-limited attempt.
+ */
+const NO_RETRY = ['/admin/v1/auth/refresh', '/admin/v1/auth/login', '/admin/v1/auth/logout'];
+
+/**
+ * One shared refresh, not one per caller.
+ *
+ * A screen typically has several queries in flight; when the access token
+ * expires they all 401 within milliseconds of each other. Without this they
+ * would each POST to /auth/refresh, and because refresh tokens *rotate*, the
+ * first would succeed and the rest would present a token that had just been
+ * superseded — which the API correctly reads as replay of a stolen token and
+ * answers by revoking the entire session family (§6.1). The user would be
+ * signed out precisely because their session was renewed.
+ */
+let refreshInFlight: Promise<void> | null = null;
+
+/**
+ * Serialises the refresh across *tabs*, not just within one.
+ *
+ * The in-process guard below is not enough on its own. Refresh tokens rotate,
+ * and two tabs whose tokens expire together will read the same cookie and post
+ * it at the same moment: the first rotates it, the second presents a token that
+ * has just been superseded, and the API — correctly — treats a replayed refresh
+ * token as theft and revokes the whole session family (§6.1). The user is
+ * signed out of both tabs for the crime of having two tabs open.
+ *
+ * A Web Lock makes the second tab wait, by which point the cookie holds the new
+ * token and its refresh is an ordinary rotation. Falls back to running directly
+ * where the API is unavailable — worse, but no worse than before.
+ */
+async function withRefreshLock<T>(work: () => Promise<T>): Promise<T> {
+  if (typeof navigator === 'undefined' || !navigator.locks) return work();
+  return (await navigator.locks.request('cms-auth-refresh', work)) as T;
+}
+
+function refreshOnce(): Promise<void> {
+  if (!refreshInFlight) {
+    refreshInFlight = withRefreshLock(() =>
+      call<void>('/admin/v1/auth/refresh', { method: 'POST' }, false).then(() => undefined),
+    ).finally(() => {
+      refreshInFlight = null;
+    });
+  }
+  return refreshInFlight;
+}
+
+async function call<T>(path: string, init: RequestInit = {}, allowRetry = true): Promise<T> {
   const response = await fetch(path, {
     ...init,
     // Session cookies are HttpOnly, so every call must opt in to sending them.
@@ -40,6 +91,32 @@ async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   if (!response.ok) {
     const error = (body as ApiErrorBody | null)?.error;
+
+    /**
+     * An expired access token is refreshed here, for every call — not only the
+     * ones that remembered to ask.
+     *
+     * This used to live in `withRefresh`, which exactly one caller used (the
+     * session query). Everything else — saving an entry, publishing, uploading,
+     * editing the content model — failed outright once the 15-minute access
+     * token expired, showing "You are not signed in" to someone who was. With
+     * autosave that is worse than an inconvenience: work silently stops being
+     * saved while the editor still looks healthy.
+     */
+    if (
+      response.status === 401 &&
+      allowRetry &&
+      !NO_RETRY.some((endpoint) => path.startsWith(endpoint))
+    ) {
+      try {
+        await refreshOnce();
+        return await call<T>(path, init, false);
+      } catch {
+        // Refresh failed — the session is genuinely gone. Fall through and
+        // report the original 401 so the session provider can sign the user out.
+      }
+    }
+
     throw new ApiError(
       error?.code ?? 'internal_error',
       error?.message ?? 'Something went wrong.',
@@ -81,18 +158,13 @@ export const api = {
 };
 
 /**
- * A 401 anywhere means the access token expired. One refresh attempt is made
- * and the original call replayed; a second failure sends the user to sign-in.
- * Kept here rather than in an interceptor so the retry is visible at the call
- * site that owns it.
+ * Retained for call sites that read better with the retry stated explicitly.
+ *
+ * `call()` now refreshes for every request, so this adds nothing on its own —
+ * it is a no-op wrapper kept so the session query still reads as "this one
+ * tolerates an expired token". Do not reach for it expecting behaviour the
+ * client does not already have.
  */
 export async function withRefresh<T>(work: () => Promise<T>): Promise<T> {
-  try {
-    return await work();
-  } catch (error) {
-    if (!(error instanceof ApiError) || error.status !== 401) throw error;
-
-    await api.post('/admin/v1/auth/refresh');
-    return work();
-  }
+  return work();
 }
