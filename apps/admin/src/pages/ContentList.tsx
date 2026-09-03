@@ -32,6 +32,7 @@ export function ContentList() {
   const ws = currentWorkspace?.id;
   const [status, setStatus] = useState<EntryStatus | undefined>();
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [createError, setCreateError] = useState<string | null>(null);
 
   const base = `/o/${currentOrg?.slug}/s/${currentWorkspace?.slug}/content/${typeApiId}`;
 
@@ -53,10 +54,20 @@ export function ContentList() {
   });
 
   const create = useMutation({
-    mutationFn: () => api.post<EntryDto>(`/admin/v1/workspaces/${ws}/content/${typeApiId}`, { data: {} }),
+    mutationFn: () => {
+      setCreateError(null);
+      return api.post<EntryDto>(`/admin/v1/workspaces/${ws}/content/${typeApiId}`, { data: {} });
+    },
     onSuccess: (newEntry) => {
       void queryClient.invalidateQueries({ queryKey: ['entries', ws, typeApiId] });
       navigate(`${base}/${newEntry.id}`);
+    },
+    onError: (caught) => {
+      if (caught instanceof ApiError) {
+        setCreateError(caught.message);
+      } else {
+        setCreateError((caught as Error).message || 'Failed to create entry.');
+      }
     },
   });
 
@@ -105,6 +116,12 @@ export function ContentList() {
           </Button>
         )}
       </header>
+
+      {createError && (
+        <div className="rounded-lg border border-danger/30 bg-danger/5 p-3 text-sm text-danger">
+          <p className="font-medium">{createError}</p>
+        </div>
+      )}
 
       <div className="flex flex-wrap gap-1.5">
         {TABS.map((tab) => (

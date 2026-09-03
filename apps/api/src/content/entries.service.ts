@@ -440,7 +440,13 @@ export class EntriesService {
     authorize(ctx, 'content.delete', { ownerId: entry.authorId, status: entry.status });
 
     await this.prisma.asSystem(async (tx) => {
-      await tx.contentEntry.update({ where: { id: entry.id }, data: { deletedAt: new Date() } });
+      await tx.contentEntry.update({
+        where: { id: entry.id },
+        data: {
+          deletedAt: new Date(),
+          slug: entry.slug ? `${entry.slug.slice(0, 100)}__del_${entry.id.slice(0, 8)}` : null,
+        },
+      });
       await this.events.emit(tx, 'content.deleted', { entry_id: entry.id }, { workspaceId });
       await this.audit.recordIn(tx, {
         workspaceId,
@@ -908,7 +914,6 @@ export class EntriesService {
             contentTypeId,
             slug,
             locale,
-            deletedAt: null,
             ...(excludeId ? { id: { not: excludeId } } : {}),
           },
         }),

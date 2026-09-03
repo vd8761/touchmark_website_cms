@@ -749,12 +749,35 @@ export class DeliveryContentService {
     },
     type: { apiId: string; schemaVersion: number },
   ) {
+    let data = entry.data;
+    if (data && typeof data === 'object' && !Array.isArray(data)) {
+      const record = data as Record<string, unknown>;
+      const startRaw = record.startdate ?? record.start_at;
+      const endRaw = record.enddate ?? record.end_at;
+      if (startRaw || endRaw) {
+        const now = Date.now();
+        const start = startRaw ? new Date(String(startRaw)).getTime() : null;
+        const end = endRaw ? new Date(String(endRaw)).getTime() : null;
+        let eventStatus: 'upcoming' | 'ongoing' | 'completed' = 'upcoming';
+        if (end && now > end) {
+          eventStatus = 'completed';
+        } else if (start && now >= start && (!end || now <= end)) {
+          eventStatus = 'ongoing';
+        } else if (start && now < start) {
+          eventStatus = 'upcoming';
+        } else if (end && now <= end) {
+          eventStatus = 'upcoming';
+        }
+        data = { ...record, event_status: eventStatus };
+      }
+    }
+
     return {
       id: entry.id,
       type: type.apiId,
       slug: entry.slug,
       locale: entry.locale,
-      data: entry.data,
+      data,
       seo: entry.seo,
       published_at: entry.publishedAt?.toISOString() ?? null,
       updated_at: entry.updatedAt.toISOString(),
