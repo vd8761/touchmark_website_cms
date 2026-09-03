@@ -1,6 +1,7 @@
-import { Navigate, Route, Routes, useParams } from 'react-router-dom';
+import { Navigate, Route, Routes, useNavigate, useParams } from 'react-router-dom';
 
 import { AppShell } from './components/AppShell';
+import { CreateSiteModal } from './components/CreateSiteModal';
 import { SessionProvider, useSession } from './lib/session';
 import { ApiKeys } from './pages/ApiKeys';
 import { ApiLogs } from './pages/ApiLogs';
@@ -43,6 +44,23 @@ export function App() {
         }
       />
 
+      <Route
+        path="/o/:orgSlug/sites/new"
+        element={
+          <SessionProvider>
+            <NewSiteRoute />
+          </SessionProvider>
+        }
+      />
+      <Route
+        path="/sites/new"
+        element={
+          <SessionProvider>
+            <NewSiteRoute />
+          </SessionProvider>
+        }
+      />
+
       <Route path="/o/:orgSlug/s/:siteSlug/*" element={<SiteRoutes />} />
 
       {/* No site in the URL: send the user to their first one, or to onboarding. */}
@@ -55,6 +73,20 @@ export function App() {
         }
       />
     </Routes>
+  );
+}
+
+function NewSiteRoute() {
+  const { orgSlug } = useParams();
+  const navigate = useNavigate();
+  const { organisations } = useSession();
+  const org = organisations.find((o) => o.slug === orgSlug);
+
+  return (
+    <CreateSiteModal
+      initialOrgId={org?.id}
+      onClose={() => navigate(-1)}
+    />
   );
 }
 

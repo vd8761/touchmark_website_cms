@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { ApiError, api } from '../lib/api';
@@ -25,11 +25,15 @@ const TABS: { label: string; status?: EntryStatus }[] = [
 /** The content list of §17.4 — saved-view tabs, status filter, row actions. */
 export function ContentList() {
   const { typeApiId } = useParams();
+  const navigate = useNavigate();
   const { currentWorkspace, currentOrg, can } = useSession();
   const queryClient = useQueryClient();
 
   const ws = currentWorkspace?.id;
   const [status, setStatus] = useState<EntryStatus | undefined>();
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  const base = `/o/${currentOrg?.slug}/s/${currentWorkspace?.slug}/content/${typeApiId}`;
 
   const typesQuery = useQuery({
     queryKey: ['content-types', ws],
@@ -50,7 +54,19 @@ export function ContentList() {
 
   const create = useMutation({
     mutationFn: () => api.post<EntryDto>(`/admin/v1/workspaces/${ws}/content/${typeApiId}`, { data: {} }),
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['entries', ws, typeApiId] }),
+    onSuccess: (newEntry) => {
+      void queryClient.invalidateQueries({ queryKey: ['entries', ws, typeApiId] });
+      navigate(`${base}/${newEntry.id}`);
+    },
+  });
+
+  const remove = useMutation({
+    mutationFn: (entryId: string) =>
+      api.delete(`/admin/v1/workspaces/${ws}/content/entries/${entryId}`),
+    onSuccess: () => {
+      setDeletingId(null);
+      void queryClient.invalidateQueries({ queryKey: ['entries', ws, typeApiId] });
+    },
   });
 
   if (typesQuery.isLoading || entriesQuery.isLoading) return <Skeleton rows={8} />;
@@ -70,8 +86,8 @@ export function ContentList() {
 
   const entries = entriesQuery.data?.items ?? [];
   const total = entriesQuery.data?.meta.total ?? 0;
-  const base = `/o/${currentOrg?.slug}/s/${currentWorkspace?.slug}/content/${typeApiId}`;
   const canCreate = can('content.create') || can('content.edit.own');
+  const canDelete = can('content.delete') || can('content.delete.own_draft');
 
   return (
     <div className="space-y-5">
@@ -144,6 +160,7 @@ export function ContentList() {
                 <th className="px-5 py-3 font-medium">Status</th>
                 <th className="px-5 py-3 font-medium">Updated</th>
                 <th className="px-5 py-3 font-medium">Version</th>
+                {canDelete && <th className="px-5 py-3 font-medium text-right">Actions</th>}
               </tr>
             </thead>
             <tbody>
@@ -179,6 +196,40 @@ export function ContentList() {
                     </time>
                   </td>
                   <td className="px-5 py-3 text-text-secondary">v{entry.current_version}</td>
+                  {canDelete && (
+                    <td className="px-5 py-3 text-right">
+                      {deletingId === entry.id ? (
+                        <div className="flex items-center justify-end gap-1.5">
+                          <span className="text-xs text-danger">Delete?</span>
+                          <button
+                            type="button"
+                            disabled={remove.isPending}
+                            onClick={() => remove.mutate(entry.id)}
+                            className="rounded px-1.5 py-0.5 text-xs font-semibold text-danger hover:bg-danger/10"
+                          >
+                            Yes
+                          </button>
+                          <button
+                            type="button"
+                            disabled={remove.isPending}
+                            onClick={() => setDeletingId(null)}
+                            className="rounded px-1.5 py-0.5 text-xs text-text-secondary hover:bg-surface-subtle"
+                          >
+                            No
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          type="button"
+                          onClick={() => setDeletingId(entry.id)}
+                          className="rounded px-2 py-1 text-xs text-text-secondary hover:bg-surface-subtle hover:text-danger"
+                          title="Delete entry"
+                        >
+                          Delete
+                        </button>
+                      )}
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>

@@ -4,6 +4,8 @@ import type { OrganisationDto, WorkspaceDto } from '@cms/shared';
 
 import { noteRecentSite, readRecentSites, useSession } from '../lib/session';
 import { cx } from './primitives';
+import { CreateOrgModal } from './CreateOrgModal';
+import { CreateSiteModal } from './CreateSiteModal';
 
 /**
  * The workspace switcher of §6.3 and §17.2.
@@ -22,6 +24,8 @@ export function WorkspaceSwitcher() {
   const navigate = useNavigate();
 
   const [open, setOpen] = useState(false);
+  const [showCreateSite, setShowCreateSite] = useState(false);
+  const [showCreateOrg, setShowCreateOrg] = useState(false);
   const [query, setQuery] = useState('');
   const [activeOrgId, setActiveOrgId] = useState<string | null>(null);
   const [highlight, setHighlight] = useState(0);
@@ -179,6 +183,10 @@ export function WorkspaceSwitcher() {
                 setActiveOrgId(id);
                 setHighlight(0);
               }}
+              onCreateOrg={() => {
+                setOpen(false);
+                setShowCreateOrg(true);
+              }}
             />
 
             <ul className="flex-1 overflow-y-auto p-1.5">
@@ -256,7 +264,7 @@ export function WorkspaceSwitcher() {
               type="button"
               onClick={() => {
                 setOpen(false);
-                navigate(`/o/${currentOrg?.slug ?? ''}/sites/new`);
+                setShowCreateSite(true);
               }}
               className="w-full rounded-lg px-2.5 py-2 text-left text-sm text-accent hover:bg-surface-subtle"
             >
@@ -264,6 +272,27 @@ export function WorkspaceSwitcher() {
             </button>
           </div>
         </div>
+      )}
+
+      {showCreateSite && (
+        <CreateSiteModal
+          initialOrgId={selectedOrgId}
+          onClose={() => setShowCreateSite(false)}
+          onRequestCreateOrg={() => {
+            setShowCreateSite(false);
+            setShowCreateOrg(true);
+          }}
+        />
+      )}
+
+      {showCreateOrg && (
+        <CreateOrgModal
+          onClose={() => setShowCreateOrg(false)}
+          onCreated={(newOrg) => {
+            setActiveOrgId(newOrg.id);
+            setShowCreateSite(true);
+          }}
+        />
       )}
     </div>
   );
@@ -274,39 +303,48 @@ function OrganisationList({
   selectedId,
   disabled,
   onSelect,
+  onCreateOrg,
 }: {
   organisations: OrganisationDto[];
   selectedId: string | null;
   disabled: boolean;
   onSelect: (id: string) => void;
+  onCreateOrg: () => void;
 }) {
   return (
-    <ul
-      className={cx(
-        'w-56 shrink-0 overflow-y-auto border-r border-border p-1.5',
-        disabled && 'opacity-40',
-      )}
-    >
-      <li className="px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-text-secondary">
-        Organisations
-      </li>
-      {organisations.map((org) => (
-        <li key={org.id}>
-          <button
-            type="button"
-            disabled={disabled}
-            onClick={() => onSelect(org.id)}
-            className={cx(
-              'w-full truncate rounded-lg px-2.5 py-1.5 text-left text-sm',
-              org.id === selectedId ? 'bg-surface-subtle font-medium text-text' : 'text-text-secondary',
-              !disabled && 'hover:bg-surface-subtle',
-            )}
-          >
-            {org.name}
-          </button>
+    <div className={cx('flex w-56 shrink-0 flex-col border-r border-border', disabled && 'opacity-40')}>
+      <ul className="flex-1 overflow-y-auto p-1.5">
+        <li className="px-2.5 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-text-secondary">
+          Organisations
         </li>
-      ))}
-    </ul>
+        {organisations.map((org) => (
+          <li key={org.id}>
+            <button
+              type="button"
+              disabled={disabled}
+              onClick={() => onSelect(org.id)}
+              className={cx(
+                'w-full truncate rounded-lg px-2.5 py-1.5 text-left text-sm',
+                org.id === selectedId ? 'bg-surface-subtle font-medium text-text' : 'text-text-secondary',
+                !disabled && 'hover:bg-surface-subtle',
+              )}
+            >
+              {org.name}
+            </button>
+          </li>
+        ))}
+      </ul>
+      <div className="border-t border-border p-1.5">
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={onCreateOrg}
+          className="w-full truncate rounded-lg px-2.5 py-1.5 text-left text-xs font-medium text-accent hover:bg-surface-subtle disabled:opacity-40"
+        >
+          ＋ New organisation
+        </button>
+      </div>
+    </div>
   );
 }
 

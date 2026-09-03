@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { ApiError, api } from '../lib/api';
@@ -24,6 +24,7 @@ import { useAutosave, type AutosaveState } from '../lib/use-autosave';
  */
 export function EntryEditor() {
   const { typeApiId, entryId } = useParams();
+  const navigate = useNavigate();
   const { currentWorkspace, currentOrg, can } = useSession();
   const queryClient = useQueryClient();
 
@@ -42,6 +43,7 @@ export function EntryEditor() {
   const [scheduleAt, setScheduleAt] = useState('');
   const [showVersions, setShowVersions] = useState(false);
   const [comparing, setComparing] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   /** The version our own save produced, so the reset effect can ignore it. */
   const selfSavedVersion = useRef<number | null>(null);
@@ -152,6 +154,15 @@ export function EntryEditor() {
     onError: (error) => handleError(error as ApiError),
   });
 
+  const deleteEntry = useMutation({
+    mutationFn: () => api.delete(entryPath),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['entries', ws, typeApiId] });
+      navigate(`/o/${currentOrg?.slug}/s/${currentWorkspace?.slug}/content/${typeApiId}`);
+    },
+    onError: (error) => handleError(error as ApiError),
+  });
+
   function handleError(error: ApiError) {
     if (error.fields?.length) {
       setFieldErrors(Object.fromEntries(error.fields.map((f) => [f.field, f.message])));
@@ -239,6 +250,7 @@ export function EntryEditor() {
 
   const listPath = `/o/${currentOrg?.slug}/s/${currentWorkspace?.slug}/content/${type.api_id}`;
   const canPublish = can('content.publish');
+  const canDelete = can('content.delete') || can('content.delete.own_draft');
 
   return (
     <div className="mx-auto max-w-5xl space-y-5 pb-24">
@@ -446,6 +458,47 @@ export function EntryEditor() {
               {(versionsQuery.data?.items.length ?? 0) > 1 && (
                 <Button variant="secondary" onClick={() => setComparing(true)}>
                   Compare versions
+                </Button>
+              )}
+            </Card>
+          )}
+
+          {canDelete && (
+            <Card className="space-y-3 border-danger/30 bg-danger/5">
+              <h2 className="text-sm font-semibold text-text">Danger zone</h2>
+              <p className="text-xs text-text-secondary">
+                Delete this entry. It will be removed from your content list.
+              </p>
+              {confirmDelete ? (
+                <div className="space-y-2">
+                  <p className="text-xs font-medium text-danger">
+                    Are you sure you want to delete this entry?
+                  </p>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="danger"
+                      loading={deleteEntry.isPending}
+                      onClick={() => deleteEntry.mutate()}
+                      className="w-full text-xs"
+                    >
+                      Yes, delete
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      onClick={() => setConfirmDelete(false)}
+                      className="w-full text-xs"
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <Button
+                  variant="danger"
+                  onClick={() => setConfirmDelete(true)}
+                  className="w-full text-xs"
+                >
+                  Delete entry
                 </Button>
               )}
             </Card>
