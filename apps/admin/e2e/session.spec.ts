@@ -109,7 +109,7 @@ test.describe('session', () => {
     await page.goto(sitePath(fixture, '/settings/content-types'));
 
     await expect(page.getByText(/not signed in/)).toHaveCount(0);
-    await expect(page.getByRole('heading', { name: /Content types/i })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Content types', exact: true })).toBeVisible();
 
     // The session must still be usable afterwards — a family revocation would
     // show up here as a redirect to sign-in on the very next navigation.
