@@ -269,6 +269,55 @@ export class AuthService {
     await this.mail.sendPasswordChanged(record.user.email);
   }
 
+  async changePassword(
+    userId: string,
+    currentPassword: string,
+    newPassword: string,
+    client: ClientInfo,
+  ): Promise<void> {
+    const user = await this.prisma.asSystem((tx) =>
+      tx.user.findUnique({
+        where: { id: userId, deletedAt: null },
+        select: { id: true, email: true, passwordHash: true },
+      }),
+    );
+
+    if (!user || !user.passwordHash) {
+      throw new AppError('invalid_request', 'User not found or has no password set.');
+    }
+
+    const currentMatches = await this.passwords.verify(user.passwordHash, currentPassword);
+    if (!currentMatches) {
+      throw new AppError('invalid_credentials', 'The current password you entered is incorrect.', {
+        detail: 'Please check your current password and try again.',
+        fields: [{ field: 'current_password', code: 'incorrect', message: 'Current password does not match.' }],
+      });
+    }
+
+    await this.passwords.assertAcceptable(newPassword, { email: user.email });
+    const passwordHash = await this.passwords.hash(newPassword);
+
+    await this.prisma.asSystem((tx) =>
+      tx.user.update({
+        where: { id: userId },
+        data: { passwordHash },
+      }),
+    );
+
+    await this.audit.record({
+      actorType: 'user',
+      actorId: userId,
+      action: 'user.password_changed',
+      resourceType: 'user',
+      resourceId: userId,
+      ip: client.ip,
+      userAgent: client.userAgent,
+      requestId: client.requestId,
+    });
+
+    await this.mail.sendPasswordChanged(user.email);
+  }
+
   async verifyEmail(token: string): Promise<void> {
     const record = await this.prisma.asSystem((tx) =>
       tx.emailToken.findUnique({

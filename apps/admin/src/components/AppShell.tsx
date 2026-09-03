@@ -8,6 +8,7 @@ import type { ContentTypeDto } from '../lib/content-types';
 import { useSession } from '../lib/session';
 import { cx } from './primitives';
 import { WorkspaceSwitcher } from './WorkspaceSwitcher';
+import { ChangePasswordModal } from './ChangePasswordModal';
 
 /**
  * The app shell of §17.2: fixed sidebar, top bar with the workspace switcher,
@@ -211,6 +212,7 @@ export function AppShell() {
   // On narrow screens the sidebar is a slide-over drawer rather than a fixed
   // rail; this tracks whether it is open. It has no effect from `md` up.
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [showChangePassword, setShowChangePassword] = useState(false);
 
   // `[` collapses the sidebar to an icon rail; the state is per user (§17.2).
   useEffect(() => {
@@ -408,6 +410,14 @@ export function AppShell() {
             </button>
             <button
               type="button"
+              onClick={() => setShowChangePassword(true)}
+              className="rounded-lg px-2.5 py-1.5 text-sm text-text-secondary hover:bg-surface-subtle"
+              title="Change your account password"
+            >
+              Password
+            </button>
+            <button
+              type="button"
               onClick={signOut}
               className="rounded-lg px-2.5 py-1.5 text-sm text-text-secondary hover:bg-surface-subtle"
             >
@@ -420,6 +430,10 @@ export function AppShell() {
           <Outlet />
         </main>
       </div>
+
+      {showChangePassword && (
+        <ChangePasswordModal onClose={() => setShowChangePassword(false)} />
+      )}
     </div>
   );
 }

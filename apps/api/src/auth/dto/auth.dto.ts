@@ -66,3 +66,15 @@ export class VerifyEmailDto {
   @IsString()
   token!: string;
 }
+
+export class ChangePasswordDto {
+  @ApiProperty({ description: 'Current password for verification.' })
+  @IsString()
+  current_password!: string;
+
+  @ApiProperty({ minLength: 12, description: 'New password.' })
+  @IsString()
+  @MinLength(12)
+  @MaxLength(256)
+  new_password!: string;
+}

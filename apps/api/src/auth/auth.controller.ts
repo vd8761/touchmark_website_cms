@@ -16,6 +16,7 @@ import type { Request, Response } from 'express';
 import { AppError } from '../common/errors';
 import { AuthService } from './auth.service';
 import {
+  ChangePasswordDto,
   ForgotPasswordDto,
   LoginDto,
   RegisterDto,
@@ -173,6 +174,19 @@ export class AuthController {
   async resetPassword(@Body() dto: ResetPasswordDto, @Req() req: Request) {
     await this.auth.resetPassword(dto.token, dto.password, client(req));
     return { data: { reset: true } };
+  }
+
+  @Post('change-password')
+  @HttpCode(200)
+  @ApiOperation({ summary: 'Change password for the logged-in user' })
+  @ApiResponse({ status: 200, description: 'Password changed successfully.' })
+  @ApiResponse({ status: 401, description: 'Incorrect current password or not signed in.' })
+  async changePassword(@Body() dto: ChangePasswordDto, @Req() req: Request) {
+    if (!req.ctx?.userId) {
+      throw new AppError('invalid_credentials', 'You must be signed in to change your password.');
+    }
+    await this.auth.changePassword(req.ctx.userId, dto.current_password, dto.new_password, client(req));
+    return { data: { success: true } };
   }
 
   @Public()

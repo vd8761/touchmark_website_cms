@@ -15,6 +15,8 @@ import { EntryEditor } from './pages/EntryEditor';
 import { MediaLibrary } from './pages/MediaLibrary';
 import { Menus } from './pages/Menus';
 import { Login } from './pages/Login';
+import { ForgotPassword } from './pages/ForgotPassword';
+import { ResetPassword } from './pages/ResetPassword';
 import { Members } from './pages/Members';
 import { Onboarding } from './pages/Onboarding';
 import { OrganisationSettings } from './pages/OrganisationSettings';
@@ -34,6 +36,8 @@ export function App() {
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
+      <Route path="/forgot-password" element={<ForgotPassword />} />
+      <Route path="/reset-password" element={<ResetPassword />} />
 
       <Route
         path="/onboarding"
