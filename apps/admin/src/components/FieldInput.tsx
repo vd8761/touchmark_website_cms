@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState } from 'react';
+import { lazy, Suspense, useMemo, useRef, useState } from 'react';
 
 import type { FieldDto } from '../lib/content-types';
 import { EntryPicker } from './EntryPicker';
@@ -144,23 +144,19 @@ export function FieldInput({
 
       case 'date':
         return (
-          <Input
-            type="date"
-            value={asString(value).slice(0, 10)}
+          <DateInput
+            value={value}
             disabled={disabled}
-            onChange={(event) => onChange(event.target.value || null)}
+            onChange={(val) => onChange(val)}
           />
         );
 
       case 'datetime':
         return (
-          <Input
-            type="datetime-local"
-            value={asString(value).slice(0, 16)}
+          <DateTimeInput
+            value={value}
             disabled={disabled}
-            onChange={(event) =>
-              onChange(event.target.value ? new Date(event.target.value).toISOString() : null)
-            }
+            onChange={(val) => onChange(val)}
           />
         );
 
@@ -384,3 +380,210 @@ function MediaField({
     </div>
   );
 }
+
+function DateInput({
+  value,
+  disabled,
+  onChange,
+}: {
+  value: unknown;
+  disabled?: boolean;
+  onChange: (val: string | null) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const localValue = useMemo(() => {
+    if (!value) return '';
+    const str = String(value).trim();
+    if (!str) return '';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str;
+    const d = new Date(str);
+    if (Number.isNaN(d.getTime())) return str.slice(0, 10);
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  }, [value]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    onChange(e.target.value || null);
+  };
+
+  const handleSetToday = () => {
+    const d = new Date();
+    const pad = (n: number) => String(n).padStart(2, '0');
+    onChange(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
+  };
+
+  const handleClear = () => {
+    onChange(null);
+  };
+
+  const handleTriggerPicker = () => {
+    if (inputRef.current && 'showPicker' in inputRef.current) {
+      try {
+        inputRef.current.showPicker();
+      } catch {
+        inputRef.current.focus();
+      }
+    }
+  };
+
+  return (
+    <div className="flex items-center gap-2">
+      <div className="relative flex-1">
+        <input
+          ref={inputRef}
+          type="date"
+          value={localValue}
+          disabled={disabled}
+          onChange={handleChange}
+          className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-secondary focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+        />
+      </div>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={handleTriggerPicker}
+        title="Open calendar picker"
+        className="rounded-lg border border-border bg-surface px-2.5 py-2 text-xs font-medium text-text-secondary hover:bg-surface-subtle hover:text-text disabled:opacity-50"
+      >
+        📅 Pick
+      </button>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={handleSetToday}
+        title="Set to today"
+        className="rounded-lg border border-border bg-surface px-2.5 py-2 text-xs font-medium text-text-secondary hover:bg-surface-subtle hover:text-text disabled:opacity-50"
+      >
+        Today
+      </button>
+      {Boolean(value) && !disabled && (
+        <button
+          type="button"
+          onClick={handleClear}
+          title="Clear date"
+          className="rounded-lg border border-border bg-surface px-2.5 py-2 text-xs font-medium text-danger hover:bg-danger/10"
+        >
+          ✕ Clear
+        </button>
+      )}
+    </div>
+  );
+}
+
+function DateTimeInput({
+  value,
+  disabled,
+  onChange,
+}: {
+  value: unknown;
+  disabled?: boolean;
+  onChange: (val: string | null) => void;
+}) {
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // Convert stored ISO/UTC string (e.g. "2026-09-15T04:30:00.000Z") to local "YYYY-MM-DDTHH:mm"
+  const localValue = useMemo(() => {
+    if (!value) return '';
+    const str = String(value).trim();
+    if (!str) return '';
+    const d = new Date(str);
+    if (Number.isNaN(d.getTime())) return '';
+    const pad = (n: number) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }, [value]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const raw = e.target.value;
+    if (!raw) {
+      onChange(null);
+      return;
+    }
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) {
+      return;
+    }
+    // Store ISO 8601 UTC string
+    onChange(d.toISOString());
+  };
+
+  const handleSetNow = () => {
+    onChange(new Date().toISOString());
+  };
+
+  const handleClear = () => {
+    onChange(null);
+  };
+
+  const handleTriggerPicker = () => {
+    if (inputRef.current && 'showPicker' in inputRef.current) {
+      try {
+        inputRef.current.showPicker();
+      } catch {
+        inputRef.current.focus();
+      }
+    }
+  };
+
+  // Human-readable formatted preview in local timezone
+  const preview = useMemo(() => {
+    if (!value) return null;
+    const d = new Date(String(value));
+    if (Number.isNaN(d.getTime())) return null;
+    return d.toLocaleString(undefined, {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+    });
+  }, [value]);
+
+  return (
+    <div className="space-y-1.5">
+      <div className="flex items-center gap-2">
+        <div className="relative flex-1">
+          <input
+            ref={inputRef}
+            type="datetime-local"
+            value={localValue}
+            disabled={disabled}
+            onChange={handleChange}
+            className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-text placeholder:text-text-secondary focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
+          />
+        </div>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={handleTriggerPicker}
+          title="Open calendar picker"
+          className="rounded-lg border border-border bg-surface px-2.5 py-2 text-xs font-medium text-text-secondary hover:bg-surface-subtle hover:text-text disabled:opacity-50"
+        >
+          📅 Pick
+        </button>
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={handleSetNow}
+          title="Set to current date and time"
+          className="rounded-lg border border-border bg-surface px-2.5 py-2 text-xs font-medium text-text-secondary hover:bg-surface-subtle hover:text-text disabled:opacity-50"
+        >
+          Now
+        </button>
+        {Boolean(value) && !disabled && (
+          <button
+            type="button"
+            onClick={handleClear}
+            title="Clear date"
+            className="rounded-lg border border-border bg-surface px-2.5 py-2 text-xs font-medium text-danger hover:bg-danger/10"
+          >
+            ✕ Clear
+          </button>
+        )}
+      </div>
+      {preview && (
+        <p className="text-xs text-text-secondary">
+          Selected: <span className="font-medium text-text">{preview}</span>
+        </p>
+      )}
+    </div>
+  );
+}
+
